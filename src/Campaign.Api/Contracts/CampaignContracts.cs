@@ -49,11 +49,29 @@ public sealed record DeliveryResponse(
     DeliveryStatus Status,
     int AttemptCount,
     string? LastError,
+    FailureKind? FailureKind,
     string? WorkerId,
     DateTimeOffset CreatedAt,
     DateTimeOffset? PublishedAt,
     DateTimeOffset? SentAt,
     DateTimeOffset UpdatedAt);
+
+public sealed record DeliveryAttemptResponse(
+    int AttemptNo,
+    string WorkerId,
+    bool Succeeded,
+    string? Error,
+    DateTimeOffset StartedAt,
+    DateTimeOffset FinishedAt);
+
+public sealed record DeliveryDetailResponse(DeliveryResponse Delivery, IReadOnlyList<DeliveryAttemptResponse> Attempts);
+
+/// <summary>Kết quả chạy lại job thất bại của một chiến dịch.</summary>
+public sealed record RetryFailedResponse(
+    Guid CampaignId,
+    int Retried,
+    int SkippedPermanent,
+    int SkippedMaxAttempts);
 
 public sealed record PagedResponse<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalItems);
 

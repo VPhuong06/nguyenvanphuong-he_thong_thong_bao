@@ -23,6 +23,7 @@ public static class CampaignEndpoints
         group.MapGet("/{id:guid}", GetCampaign);
         group.MapPost("/{id:guid}/start", StartCampaign);
         group.MapGet("/{id:guid}/deliveries", ListDeliveries);
+        group.MapPost("/{id:guid}/retry-failed", RetryFailed);
 
         return app;
     }
@@ -242,12 +243,66 @@ public static class CampaignEndpoints
             .OrderBy(d => d.RecipientAddress)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(d => new DeliveryResponse(
-                d.Id, d.RecipientName, d.RecipientAddress, d.Status, d.AttemptCount, d.LastError, d.WorkerId,
-                d.CreatedAt, d.PublishedAt, d.SentAt, d.UpdatedAt))
+            .Select(DeliveryEndpoints.ToResponse)
             .ToListAsync(ct);
 
         return Results.Ok(new PagedResponse<DeliveryResponse>(items, page, pageSize, totalItems));
+    }
+
+    /// <summary>
+    /// Chạy lại các job thất bại của chiến dịch: đưa về Pending và để outbox publish lại.
+    /// Mặc định bỏ qua lỗi vĩnh viễn (chạy lại vẫn hỏng) và job đã thử quá MaxAttempts lần;
+    /// includePermanent=true để chạy lại cả lỗi vĩnh viễn, ví dụ sau khi đã sửa địa chỉ.
+    /// </summary>
+    private static async Task<IResult> RetryFailed(
+        Guid id, NotificationDbContext db, OutboxSignal outboxSignal, ILoggerFactory loggerFactory,
+        CancellationToken ct, bool includePermanent = false)
+    {
+        var status = await db.Campaigns.Where(c => c.Id == id).Select(c => (CampaignStatus?)c.Status)
+            .FirstOrDefaultAsync(ct);
+        if (status is null)
+            return Results.NotFound();
+        if (status == CampaignStatus.Draft)
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Không thể chạy lại",
+                detail: "Chiến dịch chưa được start.");
+
+        var now = DateTimeOffset.UtcNow;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        var failed = db.Deliveries.Where(d => d.CampaignId == id && d.Status == DeliveryStatus.Failed);
+        var skippedPermanent = includePermanent
+            ? 0
+            : await failed.CountAsync(d => d.FailureKind == FailureKind.Permanent, ct);
+        var skippedMaxAttempts = await failed.CountAsync(d =>
+            d.AttemptCount >= RetryPolicy.MaxAttempts &&
+            (includePermanent || d.FailureKind != FailureKind.Permanent), ct);
+
+        var retried = await failed
+            .Where(d => d.AttemptCount < RetryPolicy.MaxAttempts &&
+                        (includePermanent || d.FailureKind != FailureKind.Permanent))
+            .ExecuteUpdateAsync(RetryPolicy.ResetToPending(now), ct);
+
+        if (retried > 0)
+        {
+            // Chiến dịch đã Completed/CompletedWithFailures quay lại Running cho tới khi các job chạy lại xong
+            await db.Campaigns
+                .Where(c => c.Id == id && c.Status != CampaignStatus.Draft)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.Status, CampaignStatus.Running)
+                    .SetProperty(c => c.CompletedAt, (DateTimeOffset?)null), ct);
+        }
+
+        await tx.CommitAsync(ct);
+
+        var response = new RetryFailedResponse(id, retried, skippedPermanent, skippedMaxAttempts);
+        if (retried == 0)
+            return Results.Ok(response);
+
+        outboxSignal.Notify();
+        loggerFactory.CreateLogger(typeof(CampaignEndpoints)).LogInformation(
+            "Chạy lại {Retried} job thất bại của chiến dịch {CampaignId} (bỏ qua {SkippedPermanent} lỗi vĩnh viễn, {SkippedMaxAttempts} job quá số lần thử)",
+            retried, id, skippedPermanent, skippedMaxAttempts);
+        return Results.Accepted($"/campaigns/{id}", response);
     }
 
     // Số liệu được đếm trực tiếp từ bảng deliveries nên luôn đúng khi nhiều worker cập nhật song song

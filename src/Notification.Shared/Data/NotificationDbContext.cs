@@ -48,6 +48,7 @@ public class NotificationDbContext(DbContextOptions<NotificationDbContext> optio
             e.Property(x => x.RecipientName).HasMaxLength(200);
             e.Property(x => x.RecipientAddress).HasMaxLength(320);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.FailureKind).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.WorkerId).HasMaxLength(100);
             // Đếm Pending/Sent/Failed theo chiến dịch
             e.HasIndex(x => new { x.CampaignId, x.Status });

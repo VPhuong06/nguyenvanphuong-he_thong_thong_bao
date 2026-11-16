@@ -50,6 +50,7 @@ public class Delivery
     public DeliveryStatus Status { get; set; }
     public int AttemptCount { get; set; }
     public string? LastError { get; set; }
+    public FailureKind? FailureKind { get; set; }
 
     /// <summary>Worker đang giữ hoặc đã xử lý job.</summary>
     public string? WorkerId { get; set; }

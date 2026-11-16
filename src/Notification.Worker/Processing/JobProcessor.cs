@@ -93,6 +93,7 @@ public sealed class JobProcessor(
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(d => d.Status, newStatus)
                     .SetProperty(d => d.LastError, result.Error)
+                    .SetProperty(d => d.FailureKind, result.FailureKind)
                     .SetProperty(d => d.SentAt, result.Succeeded ? finishedAt : null)
                     .SetProperty(d => d.LockedAt, (DateTimeOffset?)null)
                     .SetProperty(d => d.UpdatedAt, finishedAt), ct);
@@ -115,8 +116,8 @@ public sealed class JobProcessor(
             logger.LogInformation("Worker {WorkerId} đã gửi job {DeliveryId} tới {Address} ({Duration} ms)",
                 workerId, message.DeliveryId, job.RecipientAddress, (int)(finishedAt - startedAt).TotalMilliseconds);
         else
-            logger.LogWarning("Worker {WorkerId} gửi job {DeliveryId} tới {Address} thất bại: {Error}",
-                workerId, message.DeliveryId, job.RecipientAddress, result.Error);
+            logger.LogWarning("Worker {WorkerId} gửi job {DeliveryId} tới {Address} thất bại ({FailureKind}): {Error}",
+                workerId, message.DeliveryId, job.RecipientAddress, result.FailureKind, result.Error);
 
         await TryCompleteCampaignAsync(message.CampaignId, ct);
         return result.Succeeded ? JobOutcome.Sent : JobOutcome.Failed;

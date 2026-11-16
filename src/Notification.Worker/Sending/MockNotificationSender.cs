@@ -5,10 +5,11 @@ namespace Notification.Worker.Sending;
 
 public sealed record SendRequest(NotificationChannel Channel, string Address, string Subject, string Body);
 
-public sealed record SendResult(bool Succeeded, string? Error)
+public sealed record SendResult(bool Succeeded, string? Error, FailureKind? FailureKind)
 {
-    public static SendResult Ok() => new(true, null);
-    public static SendResult Fail(string error) => new(false, error);
+    public static SendResult Ok() => new(true, null, null);
+    public static SendResult Transient(string error) => new(false, error, Shared.Domain.FailureKind.Transient);
+    public static SendResult Permanent(string error) => new(false, error, Shared.Domain.FailureKind.Permanent);
 }
 
 public interface INotificationSender
@@ -40,10 +41,10 @@ public sealed class MockNotificationSender(IOptions<MockSenderOptions> options, 
         await Task.Delay(Random.Shared.Next(opts.MinDelayMs, Math.Max(opts.MinDelayMs, opts.MaxDelayMs) + 1), ct);
 
         if (request.Address.Contains("fail", StringComparison.OrdinalIgnoreCase))
-            return SendResult.Fail("Địa chỉ người nhận bị từ chối (giả lập)");
+            return SendResult.Permanent("Địa chỉ người nhận bị từ chối (giả lập)");
 
         if (Random.Shared.NextDouble() < opts.FailureRate)
-            return SendResult.Fail("Nhà cung cấp tạm thời không phản hồi (giả lập)");
+            return SendResult.Transient("Nhà cung cấp tạm thời không phản hồi (giả lập)");
 
         logger.LogDebug("[{Channel}] Gửi tới {Address}: {Subject}", request.Channel, request.Address, request.Subject);
         return SendResult.Ok();

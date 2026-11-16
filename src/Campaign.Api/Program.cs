@@ -30,6 +30,7 @@ await DatabaseInitializer.EnsureCreatedAsync(app.Services, app.Lifetime.Applicat
 
 app.MapGet("/", () => Results.Ok(new { service = "Campaign.Api", status = "running" }));
 app.MapCampaignEndpoints();
+app.MapDeliveryEndpoints();
 app.MapContactEndpoints();
 
 app.Run();

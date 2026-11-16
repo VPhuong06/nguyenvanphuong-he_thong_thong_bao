@@ -78,6 +78,8 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 
 Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbitmq`, `campaign-api`).
 
+Schema DB được tạo tự động khi Campaign API khởi động lần đầu. Nếu model dữ liệu thay đổi sau khi DB đã được tạo, xoá volume để tạo lại: `docker compose down -v`.
+
 ## API
 
 | Method | Path | Mô tả |
@@ -87,6 +89,9 @@ Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbit
 | GET | `/campaigns/{id}` | Chi tiết và số lượng Pending/Sent/Failed |
 | POST | `/campaigns/{id}/start` | Sinh job và đưa vào RabbitMQ |
 | GET | `/campaigns/{id}/deliveries` | Kết quả gửi chi tiết |
+| POST | `/campaigns/{id}/retry-failed` | Chạy lại các job thất bại (`?includePermanent=true` để chạy lại cả lỗi vĩnh viễn) |
+| GET | `/deliveries/{id}` | Chi tiết một job và lịch sử từng lần gửi |
+| POST | `/deliveries/{id}/retry` | Chạy lại một job thất bại |
 | GET | `/contacts` | Danh bạ để chọn người nhận (tự tạo 20 liên hệ mẫu khi DB trống) |
 
 Ví dụ tạo chiến dịch, chọn người nhận từ danh bạ và nhập thêm trực tiếp:
@@ -116,6 +121,13 @@ Content-Type: application/json
 3. **Worker** nhận job (ack thủ công, prefetch), **claim** job bằng UPDATE có điều kiện `Pending → Processing` để không gửi trùng khi message bị giao lại, gửi qua bộ gửi giả lập, ghi `Sent`/`Failed` và lịch sử `delivery_attempts`, sau đó mới ack.
 4. Khi không còn job `Pending`/`Processing`, chiến dịch chuyển sang `Completed` hoặc `CompletedWithFailures`.
 
+Chạy lại job thất bại:
+
+- Worker phân loại lỗi: **Transient** (lỗi tạm thời, chạy lại có thể thành công) hoặc **Permanent** (địa chỉ bị từ chối, chạy lại vẫn hỏng).
+- `POST /campaigns/{id}/retry-failed` đưa các job `Failed` về `Pending`, xoá `PublishedAt` để outbox publish lại, và chuyển chiến dịch về `Running`. Mặc định bỏ qua lỗi Permanent và job đã thử từ 5 lần trở lên; response cho biết số job được chạy lại và số job bị bỏ qua.
+- `POST /deliveries/{id}/retry` chạy lại một job cụ thể, không giới hạn loại lỗi hay số lần thử.
+- Lịch sử mọi lần gửi được giữ trong `delivery_attempts`, xem qua `GET /deliveries/{id}`.
+
 Khả năng phục hồi:
 
 | Thành phần dừng | Hành vi |
@@ -133,5 +145,5 @@ Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `Mock
 - [x] Start chiến dịch, publish job (outbox)
 - [x] Worker xử lý job, ghi kết quả
 - [x] Tra cứu kết quả gửi chi tiết
-- [ ] Chạy lại job thất bại
+- [x] Chạy lại job thất bại
 - [ ] Giao diện Admin Web
