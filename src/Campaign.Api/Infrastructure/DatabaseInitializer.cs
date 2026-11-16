@@ -1,4 +1,6 @@
+using Microsoft.EntityFrameworkCore;
 using Notification.Shared.Data;
+using Notification.Shared.Domain;
 
 namespace Campaign.Api.Infrastructure;
 
@@ -20,6 +22,7 @@ public static class DatabaseInitializer
                 await using var scope = services.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<NotificationDbContext>();
                 await db.Database.EnsureCreatedAsync(ct);
+                await SeedContactsAsync(db, logger, ct);
                 logger.LogInformation("Database sẵn sàng (lần thử {Attempt})", attempt);
                 return;
             }
@@ -31,5 +34,26 @@ public static class DatabaseInitializer
                 delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 15));
             }
         }
+    }
+
+    /// <summary>Tạo danh bạ mẫu khi bảng còn trống, để có sẵn người nhận khi demo.</summary>
+    private static async Task SeedContactsAsync(NotificationDbContext db, ILogger logger, CancellationToken ct)
+    {
+        if (await db.Contacts.AnyAsync(ct))
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        var contacts = Enumerable.Range(1, 20).Select(i => new Contact
+        {
+            Id = Guid.CreateVersion7(),
+            Name = $"Người nhận {i:D2}",
+            Email = $"nguoinhan{i:D2}@example.com",
+            Phone = $"+849000000{i:D2}",
+            CreatedAt = now
+        });
+
+        db.Contacts.AddRange(contacts);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Đã tạo {Count} liên hệ mẫu", 20);
     }
 }

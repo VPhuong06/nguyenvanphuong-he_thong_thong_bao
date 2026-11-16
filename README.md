@@ -85,11 +85,32 @@ Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbit
 | GET | `/campaigns/{id}` | Chi tiết và số lượng Pending/Sent/Failed |
 | POST | `/campaigns/{id}/start` | Sinh job và đưa vào RabbitMQ |
 | GET | `/campaigns/{id}/deliveries` | Kết quả gửi chi tiết |
+| GET | `/contacts` | Danh bạ để chọn người nhận (tự tạo 20 liên hệ mẫu khi DB trống) |
+
+Ví dụ tạo chiến dịch, chọn người nhận từ danh bạ và nhập thêm trực tiếp:
+
+```http
+POST /campaigns
+Content-Type: application/json
+
+{
+  "name": "Khuyến mãi tháng 11",
+  "channel": "Email",
+  "subject": "Ưu đãi dành cho {{name}}",
+  "content": "Chào {{name}}, ...",
+  "contactIds": ["<id lấy từ GET /contacts>"],
+  "recipients": [{ "name": "An", "address": "an@example.com" }]
+}
+```
+
+- `channel`: `Email` hoặc `Sms`; địa chỉ người nhận được kiểm tra theo kênh.
+- Người nhận trùng địa chỉ được tự loại bỏ.
+- Chiến dịch mới ở trạng thái `Draft`; `GET /campaigns?status=Draft&page=1&pageSize=20` hỗ trợ lọc và phân trang.
 
 ## Tiến độ
 
 - [x] Khung solution, model dữ liệu, cấu hình, logging, Docker
-- [ ] Tạo / xem chiến dịch
+- [x] Tạo / xem chiến dịch
 - [ ] Start chiến dịch, publish job
 - [ ] Worker xử lý job, ghi kết quả
 - [ ] Chạy lại job thất bại

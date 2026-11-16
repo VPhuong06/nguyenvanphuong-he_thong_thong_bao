@@ -1,0 +1,45 @@
+using Notification.Shared.Domain;
+
+namespace Campaign.Api.Contracts;
+
+/// <summary>
+/// Tạo chiến dịch. Người nhận có thể chọn từ danh bạ (ContactIds), nhập trực tiếp (Recipients) hoặc cả hai.
+/// </summary>
+public sealed record CreateCampaignRequest(
+    string Name,
+    NotificationChannel Channel,
+    string Subject,
+    string Content,
+    List<Guid>? ContactIds,
+    List<RecipientInput>? Recipients);
+
+public sealed record RecipientInput(string? Name, string Address);
+
+/// <summary>Số liệu theo dõi chiến dịch. Pending gồm cả job đang được worker xử lý.</summary>
+public sealed record CampaignStats(int Total, int Pending, int Sent, int Failed);
+
+public sealed record CampaignSummaryResponse(
+    Guid Id,
+    string Name,
+    NotificationChannel Channel,
+    CampaignStatus Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt,
+    CampaignStats Stats);
+
+public sealed record CampaignDetailResponse(
+    Guid Id,
+    string Name,
+    NotificationChannel Channel,
+    string Subject,
+    string Content,
+    CampaignStatus Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt,
+    CampaignStats Stats);
+
+public sealed record PagedResponse<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalItems);
+
+public sealed record ContactResponse(Guid Id, string Name, string? Email, string? Phone);
