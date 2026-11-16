@@ -1,0 +1,26 @@
+@* Thanh tiến độ: Đã gửi / Thất bại / Chờ gửi trên tổng số người nhận *@
+<div class="stats-bar" title="@Tooltip">
+    <span class="seg seg-sent" style="width:@Width(Stats.Sent)"></span>
+    <span class="seg seg-failed" style="width:@Width(Stats.Failed)"></span>
+    <span class="seg seg-pending" style="width:@Width(Stats.Pending)"></span>
+</div>
+@if (ShowLegend)
+{
+    <div class="stats-legend">
+        <span><i class="dot dot-sent"></i>Đã gửi @Stats.Sent</span>
+        <span><i class="dot dot-failed"></i>Thất bại @Stats.Failed</span>
+        <span><i class="dot dot-pending"></i>Chờ gửi @Stats.Pending</span>
+        <span class="muted">Tổng @Stats.Total</span>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public CampaignStats Stats { get; set; } = default!;
+    [Parameter] public bool ShowLegend { get; set; }
+
+    private string Width(int value) =>
+        FormattableString.Invariant($"{Stats.Percent(value):0.##}%");
+
+    private string Tooltip =>
+        $"Đã gửi {Stats.Sent} · Thất bại {Stats.Failed} · Chờ gửi {Stats.Pending} · Tổng {Stats.Total}";
+}

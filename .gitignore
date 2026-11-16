@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Cấu hình cục bộ của công cụ hỗ trợ
+.claude/

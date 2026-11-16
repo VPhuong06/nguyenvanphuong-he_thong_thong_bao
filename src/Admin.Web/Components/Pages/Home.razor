@@ -1,7 +1,152 @@
 ﻿@page "/"
+@implements IDisposable
+@inject CampaignApiClient Api
 
-<PageTitle>Hệ thống gửi thông báo hàng loạt</PageTitle>
+<PageTitle>Chiến dịch</PageTitle>
 
-<h1>Hệ thống gửi thông báo hàng loạt</h1>
+<div class="page-header">
+    <h1>Chiến dịch thông báo</h1>
+    <a class="btn btn-primary" href="campaigns/new">+ Tạo chiến dịch</a>
+</div>
 
-<p>Trang quản trị chiến dịch. Danh sách, tạo và theo dõi chiến dịch sẽ được bổ sung ở các bước tiếp theo.</p>
+<div class="toolbar">
+    <div class="tabs">
+        @foreach (var (value, label) in Filters)
+        {
+            <button class="tab @(_status == value ? "active" : "")" @onclick="() => ChangeFilterAsync(value)">@label</button>
+        }
+    </div>
+    <span class="muted small">Tự cập nhật mỗi 3 giây</span>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_result is null)
+{
+    @if (_error is null)
+    {
+        <p class="muted">Đang tải…</p>
+    }
+}
+else if (_result.Items.Count == 0)
+{
+    <div class="empty">
+        <p>Chưa có chiến dịch nào@(_status is null ? "" : " ở trạng thái này").</p>
+        <a class="btn btn-primary" href="campaigns/new">Tạo chiến dịch đầu tiên</a>
+    </div>
+}
+else
+{
+    <div class="card table-card">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tên chiến dịch</th>
+                    <th>Kênh</th>
+                    <th>Trạng thái</th>
+                    <th class="col-progress">Tiến độ</th>
+                    <th>Tạo lúc</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _result.Items)
+                {
+                    <tr class="clickable" @onclick='() => Nav.NavigateTo($"campaigns/{c.Id}")'>
+                        <td><a href="campaigns/@c.Id" @onclick:stopPropagation="true">@c.Name</a></td>
+                        <td>@Labels.Of(c.Channel)</td>
+                        <td><span class="@Labels.Css(c.Status)">@Labels.Of(c.Status)</span></td>
+                        <td>
+                            <StatsBar Stats="c.Stats" />
+                            <div class="small muted">@c.Stats.Done / @c.Stats.Total đã xử lý · @c.Stats.Failed lỗi</div>
+                        </td>
+                        <td class="nowrap">@Labels.Time(c.CreatedAt)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <Pager Page="_result.Page" TotalPages="_result.TotalPages" PageChanged="ChangePageAsync" />
+}
+
+@code {
+    private const int PageSize = 20;
+
+    private static readonly (string? Value, string Label)[] Filters =
+    [
+        (null, "Tất cả"),
+        (nameof(CampaignStatus.Draft), Labels.Of(CampaignStatus.Draft)),
+        (nameof(CampaignStatus.Running), Labels.Of(CampaignStatus.Running)),
+        (nameof(CampaignStatus.Completed), Labels.Of(CampaignStatus.Completed)),
+        (nameof(CampaignStatus.CompletedWithFailures), Labels.Of(CampaignStatus.CompletedWithFailures))
+    ];
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    private readonly CancellationTokenSource _cts = new();
+    private PagedResult<CampaignSummary>? _result;
+    private string? _error;
+    private string? _status;
+    private int _page = 1;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+            _ = AutoRefreshAsync();
+    }
+
+    private async Task AutoRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                await LoadAsync();
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _result = await Api.ListCampaignsAsync(_status, _page, PageSize, _cts.Token);
+            _error = null;
+        }
+        catch (ApiException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task ChangeFilterAsync(string? status)
+    {
+        _status = status;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        _page = page;
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

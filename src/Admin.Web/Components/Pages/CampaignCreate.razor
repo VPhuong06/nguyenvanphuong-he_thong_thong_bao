@@ -1,0 +1,219 @@
+@page "/campaigns/new"
+@inject CampaignApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Tạo chiến dịch</PageTitle>
+
+<div class="page-header">
+    <h1>Tạo chiến dịch</h1>
+    <a class="btn" href="">‹ Danh sách</a>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">
+        <div>@_error</div>
+        @if (_fieldErrors.Count > 0)
+        {
+            <ul>
+                @foreach (var message in _fieldErrors.SelectMany(e => e.Value))
+                {
+                    <li>@message</li>
+                }
+            </ul>
+        }
+    </div>
+}
+
+<div class="form-grid">
+    <section class="card">
+        <h2>Nội dung thông báo</h2>
+
+        <label class="field">
+            <span>Tên chiến dịch</span>
+            <input class="input @Invalid("name")" @bind="_name" maxlength="200" placeholder="Ví dụ: Khuyến mãi tháng 11" />
+        </label>
+
+        <label class="field">
+            <span>Kênh gửi</span>
+            <select class="input" @bind="_channel">
+                <option value="@NotificationChannel.Email">Email</option>
+                <option value="@NotificationChannel.Sms">SMS</option>
+            </select>
+        </label>
+
+        <label class="field">
+            <span>Tiêu đề</span>
+            <input class="input @Invalid("subject")" @bind="_subject" maxlength="500" placeholder="Ưu đãi dành cho {{name}}" />
+        </label>
+
+        <label class="field">
+            <span>Nội dung</span>
+            <textarea class="input @Invalid("content")" rows="7" @bind="_content"
+                      placeholder="Chào {{name}}, ..."></textarea>
+            <small class="muted">Dùng <code>{{name}}</code> và <code>{{address}}</code> để chèn tên và địa chỉ người nhận.</small>
+        </label>
+    </section>
+
+    <section class="card">
+        <h2>Người nhận</h2>
+
+        <div class="field">
+            <div class="field-head">
+                <span>Chọn từ danh bạ (@_selected.Count / @(_contacts?.Count ?? 0))</span>
+                @if (_contacts is { Count: > 0 })
+                {
+                    <button class="btn btn-small" type="button" @onclick="ToggleAll">
+                        @(_selected.Count == _contacts.Count ? "Bỏ chọn tất cả" : "Chọn tất cả")
+                    </button>
+                }
+            </div>
+            <div class="contact-list @Invalid("contactIds")">
+                @if (_contacts is null)
+                {
+                    <p class="muted small">Đang tải danh bạ…</p>
+                }
+                else if (_contacts.Count == 0)
+                {
+                    <p class="muted small">Danh bạ trống.</p>
+                }
+                else
+                {
+                    @foreach (var contact in _contacts)
+                    {
+                        var address = _channel == NotificationChannel.Email ? contact.Email : contact.Phone;
+                        <label class="contact">
+                            <input type="checkbox" checked="@_selected.Contains(contact.Id)"
+                                   @onchange="() => Toggle(contact.Id)" />
+                            <span>@contact.Name</span>
+                            <span class="muted small">@(address ?? "(không có địa chỉ)")</span>
+                        </label>
+                    }
+                }
+            </div>
+        </div>
+
+        <label class="field">
+            <span>Hoặc nhập trực tiếp (mỗi dòng một người, đang có @ManualRecipients.Count)</span>
+            <textarea class="input @Invalid("recipients")" rows="6" @bind="_manual" @bind:event="oninput"
+                      placeholder="@ManualPlaceholder"></textarea>
+            <small class="muted">Dạng <code>Tên &lt;địa chỉ&gt;</code>, <code>Tên, địa chỉ</code> hoặc chỉ <code>địa chỉ</code>. Người nhận trùng sẽ tự được loại bỏ.</small>
+        </label>
+    </section>
+</div>
+
+<div class="actions">
+    <button class="btn" disabled="@_submitting" @onclick="() => SubmitAsync(startNow: false)">Lưu nháp</button>
+    <button class="btn btn-primary" disabled="@_submitting" @onclick="() => SubmitAsync(startNow: true)">
+        @(_submitting ? "Đang xử lý…" : "Tạo và gửi ngay")
+    </button>
+</div>
+
+@code {
+    private IReadOnlyList<ContactItem>? _contacts;
+    private readonly HashSet<Guid> _selected = [];
+
+    private string _name = "";
+    private NotificationChannel _channel = NotificationChannel.Email;
+    private string _subject = "";
+    private string _content = "";
+    private string _manual = "";
+
+    private bool _submitting;
+    private string? _error;
+    private IReadOnlyDictionary<string, string[]> _fieldErrors = new Dictionary<string, string[]>();
+
+    private string ManualPlaceholder => _channel == NotificationChannel.Email
+        ? "Nguyễn Văn An <an@example.com>\nbinh@example.com\nfail01@example.com"
+        : "Nguyễn Văn An, 0901234567\n+84912345678";
+
+    private List<RecipientInput> ManualRecipients => _manual
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(ParseRecipient)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _contacts = await Api.ListContactsAsync();
+        }
+        catch (ApiException ex)
+        {
+            _contacts = [];
+            _error = ex.Message;
+        }
+    }
+
+    private void Toggle(Guid id)
+    {
+        if (!_selected.Add(id))
+            _selected.Remove(id);
+    }
+
+    private void ToggleAll()
+    {
+        if (_contacts is null)
+            return;
+        if (_selected.Count == _contacts.Count)
+            _selected.Clear();
+        else
+            _selected.UnionWith(_contacts.Select(c => c.Id));
+    }
+
+    private async Task SubmitAsync(bool startNow)
+    {
+        _submitting = true;
+        _error = null;
+        _fieldErrors = new Dictionary<string, string[]>();
+
+        try
+        {
+            var campaign = await Api.CreateCampaignAsync(new CreateCampaignRequest(
+                _name, _channel, _subject, _content, _selected.ToList(), ManualRecipients));
+
+            if (startNow)
+            {
+                try
+                {
+                    await Api.StartCampaignAsync(campaign.Id);
+                }
+                catch (ApiException)
+                {
+                    // Chiến dịch đã được tạo; vẫn chuyển sang trang chi tiết để start lại từ đó,
+                    // tránh người dùng bấm lần nữa và tạo trùng chiến dịch
+                }
+            }
+
+            Nav.NavigateTo($"campaigns/{campaign.Id}");
+        }
+        catch (ApiException ex)
+        {
+            _error = ex.Errors.Count > 0 ? "Dữ liệu chưa hợp lệ:" : ex.Message;
+            _fieldErrors = ex.Errors;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private string Invalid(string field) => _fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    /// <summary>Đọc một dòng người nhận: "Tên &lt;địa chỉ&gt;", "Tên, địa chỉ" hoặc "địa chỉ".</summary>
+    private static RecipientInput ParseRecipient(string line)
+    {
+        var open = line.IndexOf('<');
+        var close = line.LastIndexOf('>');
+        if (open >= 0 && close > open)
+            return new RecipientInput(Blank(line[..open].Trim().Trim('"')), line[(open + 1)..close].Trim());
+
+        var comma = line.LastIndexOf(',');
+        if (comma > 0)
+            return new RecipientInput(Blank(line[..comma].Trim()), line[(comma + 1)..].Trim());
+
+        return new RecipientInput(null, line);
+    }
+
+    private static string? Blank(string value) => value.Length == 0 ? null : value;
+}

@@ -114,6 +114,18 @@ Content-Type: application/json
 - Người nhận trùng địa chỉ được tự loại bỏ.
 - Chiến dịch mới ở trạng thái `Draft`; `GET /campaigns?status=Draft&page=1&pageSize=20` hỗ trợ lọc và phân trang.
 
+## Admin Web
+
+Giao diện quản trị (Blazor Server) chỉ giao tiếp với hệ thống qua REST tới Campaign API:
+
+| Trang | Chức năng |
+|---|---|
+| `/` | Danh sách chiến dịch, lọc theo trạng thái, thanh tiến độ Sent/Failed/Pending; tự cập nhật mỗi 3 giây |
+| `/campaigns/new` | Tạo chiến dịch: chọn người nhận từ danh bạ và/hoặc nhập tay (`Tên <địa chỉ>`, `Tên, địa chỉ` hoặc `địa chỉ`); lưu nháp hoặc tạo và gửi ngay |
+| `/campaigns/{id}` | Số liệu Pending/Sent/Failed, start chiến dịch, chạy lại job lỗi, bảng kết quả gửi lọc theo trạng thái (kèm worker đã xử lý), bấm vào từng job để xem lịch sử các lần gửi và chạy lại riêng job đó; tự cập nhật mỗi 2 giây khi đang gửi |
+
+Khi Campaign API tạm dừng, trang hiển thị thông báo "Không kết nối được Campaign API" thay vì lỗi, và tự hoạt động lại khi API chạy lại.
+
 ## Luồng xử lý một chiến dịch
 
 1. `POST /campaigns/{id}/start` chuyển chiến dịch `Draft → Running` bằng câu UPDATE có điều kiện (start hai lần thì lần sau nhận 409) và sinh một job `Pending` cho mỗi người nhận, trong cùng transaction. API trả **202 Accepted** ngay.
@@ -146,4 +158,4 @@ Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `Mock
 - [x] Worker xử lý job, ghi kết quả
 - [x] Tra cứu kết quả gửi chi tiết
 - [x] Chạy lại job thất bại
-- [ ] Giao diện Admin Web
+- [x] Giao diện Admin Web

@@ -1,0 +1,315 @@
+@page "/campaigns/{Id:guid}"
+@implements IDisposable
+@inject CampaignApiClient Api
+
+<PageTitle>@(_campaign?.Name ?? "Chiến dịch")</PageTitle>
+
+<div class="page-header">
+    <div>
+        <a class="muted small" href="">‹ Danh sách chiến dịch</a>
+        <h1>
+            @(_campaign?.Name ?? "Chiến dịch")
+            @if (_campaign is not null)
+            {
+                <span class="@Labels.Css(_campaign.Status)">@Labels.Of(_campaign.Status)</span>
+            }
+        </h1>
+    </div>
+    @if (_campaign is not null)
+    {
+        <div class="header-actions">
+            @if (_campaign.Status == CampaignStatus.Draft)
+            {
+                <button class="btn btn-primary" disabled="@_busy" @onclick="StartAsync">▶ Start chiến dịch</button>
+            }
+            else if (_campaign.Stats.Failed > 0)
+            {
+                <label class="check small">
+                    <input type="checkbox" @bind="_includePermanent" /> Gồm cả lỗi vĩnh viễn
+                </label>
+                <button class="btn btn-primary" disabled="@_busy" @onclick="RetryFailedAsync">↻ Chạy lại @_campaign.Stats.Failed job lỗi</button>
+            }
+        </div>
+    }
+</div>
+
+@if (_notice is not null)
+{
+    <div class="alert alert-success">@_notice</div>
+}
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_campaign is not null)
+{
+    var stats = _campaign.Stats;
+    <div class="stat-cards">
+        <div class="stat-card"><div class="stat-label">Tổng người nhận</div><div class="stat-value">@stats.Total</div></div>
+        <div class="stat-card stat-pending"><div class="stat-label">Chờ gửi (Pending)</div><div class="stat-value">@stats.Pending</div></div>
+        <div class="stat-card stat-sent"><div class="stat-label">Đã gửi (Sent)</div><div class="stat-value">@stats.Sent</div></div>
+        <div class="stat-card stat-failed"><div class="stat-label">Thất bại (Failed)</div><div class="stat-value">@stats.Failed</div></div>
+    </div>
+
+    <div class="card">
+        <StatsBar Stats="stats" ShowLegend="true" />
+        <dl class="info-grid">
+            <dt>Kênh</dt><dd>@Labels.Of(_campaign.Channel)</dd>
+            <dt>Tạo lúc</dt><dd>@Labels.Time(_campaign.CreatedAt)</dd>
+            <dt>Start lúc</dt><dd>@Labels.Time(_campaign.StartedAt)</dd>
+            <dt>Hoàn tất lúc</dt><dd>@Labels.Time(_campaign.CompletedAt)</dd>
+            <dt>Tiêu đề</dt><dd>@_campaign.Subject</dd>
+            <dt>Nội dung</dt><dd><pre class="content">@_campaign.Content</pre></dd>
+        </dl>
+    </div>
+
+    <h2>Kết quả gửi</h2>
+    <div class="toolbar">
+        <div class="tabs">
+            @foreach (var (value, label) in Filters)
+            {
+                <button class="tab @(_status == value ? "active" : "")" @onclick="() => ChangeFilterAsync(value)">@label</button>
+            }
+        </div>
+        <span class="muted small">@(_campaign.Status == CampaignStatus.Running ? "Đang gửi, tự cập nhật mỗi 2 giây" : "")</span>
+    </div>
+
+    @if (_deliveries is null || _deliveries.Items.Count == 0)
+    {
+        <div class="empty">
+            @(_campaign.Status == CampaignStatus.Draft
+                ? "Chiến dịch chưa start nên chưa có job gửi."
+                : "Không có job nào ở trạng thái này.")
+        </div>
+    }
+    else
+    {
+        <div class="card table-card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Người nhận</th>
+                        <th>Địa chỉ</th>
+                        <th>Trạng thái</th>
+                        <th class="num">Lần thử</th>
+                        <th>Worker</th>
+                        <th>Lỗi gần nhất</th>
+                        <th>Cập nhật</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var d in _deliveries.Items)
+                    {
+                        <tr class="clickable @(_expandedId == d.Id ? "expanded" : "")" @onclick="() => ToggleDeliveryAsync(d.Id)">
+                            <td>@d.RecipientName</td>
+                            <td class="mono">@d.RecipientAddress</td>
+                            <td><span class="@Labels.Css(d.Status)">@Labels.Of(d.Status)</span></td>
+                            <td class="num">@d.AttemptCount</td>
+                            <td class="mono small">@(d.WorkerId ?? "—")</td>
+                            <td class="small">
+                                @if (d.Status == DeliveryStatus.Failed && d.LastError is not null)
+                                {
+                                    @if (d.FailureKind is { } kind)
+                                    {
+                                        <span class="tag">@Labels.Of(kind)</span>
+                                    }
+                                    @d.LastError
+                                }
+                            </td>
+                            <td class="nowrap small">@Labels.ShortTime(d.UpdatedAt)</td>
+                        </tr>
+                        @if (_expandedId == d.Id)
+                        {
+                            <tr class="detail-row">
+                                <td colspan="7">
+                                    <DeliveryHistory Detail="_expanded" Busy="_busy" OnRetry="() => RetryDeliveryAsync(d.Id)" />
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+        <Pager Page="_deliveries.Page" TotalPages="_deliveries.TotalPages" PageChanged="ChangePageAsync" />
+    }
+}
+else if (_error is null)
+{
+    <p class="muted">Đang tải…</p>
+}
+
+@code {
+    private const int PageSize = 50;
+
+    private static readonly (string? Value, string Label)[] Filters =
+    [
+        (null, "Tất cả"),
+        (nameof(DeliveryStatus.Pending), Labels.Of(DeliveryStatus.Pending)),
+        (nameof(DeliveryStatus.Processing), Labels.Of(DeliveryStatus.Processing)),
+        (nameof(DeliveryStatus.Sent), Labels.Of(DeliveryStatus.Sent)),
+        (nameof(DeliveryStatus.Failed), Labels.Of(DeliveryStatus.Failed))
+    ];
+
+    [Parameter] public Guid Id { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private CampaignDetail? _campaign;
+    private PagedResult<DeliveryItem>? _deliveries;
+    private string? _status;
+    private int _page = 1;
+
+    private Guid? _expandedId;
+    private DeliveryDetail? _expanded;
+
+    private bool _busy;
+    private bool _includePermanent;
+    private string? _notice;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+            _ = AutoRefreshAsync();
+    }
+
+    /// <summary>Tự cập nhật khi chiến dịch đang gửi, để thấy Pending giảm và Sent/Failed tăng.</summary>
+    private async Task AutoRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                if (_campaign?.Status != CampaignStatus.Running || _busy)
+                    continue;
+                await LoadAsync();
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _campaign = await Api.GetCampaignAsync(Id, _cts.Token);
+            _deliveries = _campaign.Status == CampaignStatus.Draft
+                ? null
+                : await Api.ListDeliveriesAsync(Id, _status, _page, PageSize, _cts.Token);
+            if (_expandedId is { } expandedId)
+                _expanded = await Api.GetDeliveryAsync(expandedId, _cts.Token);
+            _error = null;
+        }
+        catch (ApiException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task StartAsync()
+    {
+        await RunActionAsync(async () =>
+        {
+            var result = await Api.StartCampaignAsync(Id);
+            _notice = $"Đã start chiến dịch, sinh {result.JobCount} job và đưa vào hàng đợi.";
+        });
+    }
+
+    private async Task RetryFailedAsync()
+    {
+        await RunActionAsync(async () =>
+        {
+            var result = await Api.RetryFailedAsync(Id, _includePermanent);
+            var skipped = new List<string>();
+            if (result.SkippedPermanent > 0)
+                skipped.Add($"{result.SkippedPermanent} lỗi vĩnh viễn");
+            if (result.SkippedMaxAttempts > 0)
+                skipped.Add($"{result.SkippedMaxAttempts} job đã thử quá nhiều lần");
+
+            _notice = (result.Retried > 0
+                    ? $"Đã đưa {result.Retried} job lỗi vào hàng đợi để gửi lại."
+                    : "Không có job nào được chạy lại.")
+                + (skipped.Count > 0 ? $" Bỏ qua {string.Join(", ", skipped)}." : "");
+        });
+    }
+
+    private async Task RetryDeliveryAsync(Guid deliveryId)
+    {
+        await RunActionAsync(async () =>
+        {
+            await Api.RetryDeliveryAsync(deliveryId);
+            _notice = "Đã đưa job vào hàng đợi để gửi lại.";
+        });
+    }
+
+    private async Task RunActionAsync(Func<Task> action)
+    {
+        _busy = true;
+        _notice = null;
+        _error = null;
+        try
+        {
+            await action();
+        }
+        catch (ApiException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await LoadAsync();
+    }
+
+    private async Task ToggleDeliveryAsync(Guid deliveryId)
+    {
+        if (_expandedId == deliveryId)
+        {
+            _expandedId = null;
+            _expanded = null;
+            return;
+        }
+
+        _expandedId = deliveryId;
+        _expanded = null;
+        try
+        {
+            _expanded = await Api.GetDeliveryAsync(deliveryId, _cts.Token);
+        }
+        catch (ApiException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ChangeFilterAsync(string? status)
+    {
+        _status = status;
+        _page = 1;
+        _expandedId = null;
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        _page = page;
+        _expandedId = null;
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

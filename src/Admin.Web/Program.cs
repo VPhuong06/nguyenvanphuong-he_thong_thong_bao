@@ -1,4 +1,5 @@
 using Admin.Web.Components;
+using Admin.Web.Services;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,7 +12,11 @@ builder.Services.AddRazorComponents()
 // Admin Client chỉ giao tiếp với hệ thống qua Campaign API (REST)
 var apiBaseUrl = builder.Configuration["CampaignApi:BaseUrl"]
     ?? throw new InvalidOperationException("Thiếu cấu hình CampaignApi:BaseUrl");
-builder.Services.AddHttpClient("CampaignApi", c => c.BaseAddress = new Uri(apiBaseUrl));
+builder.Services.AddHttpClient<CampaignApiClient>(CampaignApiClient.HttpClientName, c =>
+{
+    c.BaseAddress = new Uri(apiBaseUrl.TrimEnd('/') + "/");
+    c.Timeout = TimeSpan.FromSeconds(10);
+});
 
 var app = builder.Build();
 

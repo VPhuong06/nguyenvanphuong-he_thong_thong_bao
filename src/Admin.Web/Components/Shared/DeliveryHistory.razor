@@ -1,0 +1,57 @@
+@* Lịch sử từng lần gửi của một job *@
+@if (Detail is null)
+{
+    <p class="muted small">Đang tải lịch sử…</p>
+}
+else
+{
+    var d = Detail.Delivery;
+    <div class="history">
+        <div class="history-head">
+            <div class="small muted">
+                Mã job <span class="mono">@d.Id</span> · tạo @Labels.Time(d.CreatedAt)
+                · publish @Labels.Time(d.PublishedAt) · gửi xong @Labels.Time(d.SentAt)
+            </div>
+            @if (d.Status == DeliveryStatus.Failed)
+            {
+                <button class="btn btn-small btn-primary" disabled="@Busy" @onclick="OnRetry" @onclick:stopPropagation="true">↻ Chạy lại job này</button>
+            }
+        </div>
+
+        @if (Detail.Attempts.Count == 0)
+        {
+            <p class="muted small">Chưa có lần gửi nào.</p>
+        }
+        else
+        {
+            <table class="table table-compact">
+                <thead>
+                    <tr><th>Lần</th><th>Worker</th><th>Kết quả</th><th>Bắt đầu</th><th>Thời gian</th><th>Lỗi</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in Detail.Attempts)
+                    {
+                        <tr>
+                            <td>#@a.AttemptNo</td>
+                            <td class="mono">@a.WorkerId</td>
+                            <td>
+                                <span class="@(a.Succeeded ? "badge badge-success" : "badge badge-danger")">
+                                    @(a.Succeeded ? "Thành công" : "Thất bại")
+                                </span>
+                            </td>
+                            <td class="nowrap">@Labels.Time(a.StartedAt)</td>
+                            <td>@((int)(a.FinishedAt - a.StartedAt).TotalMilliseconds) ms</td>
+                            <td>@a.Error</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public DeliveryDetail? Detail { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback OnRetry { get; set; }
+}
