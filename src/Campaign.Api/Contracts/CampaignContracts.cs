@@ -40,6 +40,21 @@ public sealed record CampaignDetailResponse(
     DateTimeOffset? CompletedAt,
     CampaignStats Stats);
 
+public sealed record StartCampaignResponse(Guid CampaignId, CampaignStatus Status, int JobCount);
+
+public sealed record DeliveryResponse(
+    Guid Id,
+    string RecipientName,
+    string RecipientAddress,
+    DeliveryStatus Status,
+    int AttemptCount,
+    string? LastError,
+    string? WorkerId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? PublishedAt,
+    DateTimeOffset? SentAt,
+    DateTimeOffset UpdatedAt);
+
 public sealed record PagedResponse<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalItems);
 
 public sealed record ContactResponse(Guid Id, string Name, string? Email, string? Phone);

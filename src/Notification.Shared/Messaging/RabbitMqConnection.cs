@@ -10,10 +10,8 @@ public static class RabbitMqConnection
     /// Kết nối tới RabbitMQ, thử lại cho tới khi broker sẵn sàng. Sau khi đã kết nối,
     /// automatic recovery của client tự nối lại khi broker tạm dừng.
     /// </summary>
-    public static async Task<IConnection> ConnectWithRetryAsync(
-        RabbitMqOptions options, string clientName, ILogger logger, CancellationToken ct)
-    {
-        var factory = new ConnectionFactory
+    public static ConnectionFactory CreateFactory(RabbitMqOptions options, string clientName, bool automaticRecovery) =>
+        new()
         {
             HostName = options.Host,
             Port = options.Port,
@@ -21,10 +19,16 @@ public static class RabbitMqConnection
             Password = options.Password,
             VirtualHost = options.VirtualHost,
             ClientProvidedName = clientName,
-            AutomaticRecoveryEnabled = true,
-            TopologyRecoveryEnabled = true,
-            NetworkRecoveryInterval = TimeSpan.FromSeconds(5)
+            AutomaticRecoveryEnabled = automaticRecovery,
+            TopologyRecoveryEnabled = automaticRecovery,
+            NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
+            RequestedConnectionTimeout = TimeSpan.FromSeconds(5)
         };
+
+    public static async Task<IConnection> ConnectWithRetryAsync(
+        RabbitMqOptions options, string clientName, ILogger logger, CancellationToken ct)
+    {
+        var factory = CreateFactory(options, clientName, automaticRecovery: true);
 
         var delay = TimeSpan.FromSeconds(2);
         for (var attempt = 1; ; attempt++)

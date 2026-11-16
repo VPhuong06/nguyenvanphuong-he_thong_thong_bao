@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Campaign.Api.Contracts;
+using Campaign.Api.Messaging;
 using Campaign.Api.Validation;
 using Microsoft.EntityFrameworkCore;
 using Notification.Shared.Data;
@@ -20,10 +21,8 @@ public static class CampaignEndpoints
         group.MapPost("/", CreateCampaign);
         group.MapGet("/", ListCampaigns);
         group.MapGet("/{id:guid}", GetCampaign);
-
-        // TODO: các handler sẽ được cài đặt ở các bước tiếp theo
-        group.MapPost("/{id:guid}/start", (Guid id) => NotImplemented());
-        group.MapGet("/{id:guid}/deliveries", (Guid id) => NotImplemented());
+        group.MapPost("/{id:guid}/start", StartCampaign);
+        group.MapGet("/{id:guid}/deliveries", ListDeliveries);
 
         return app;
     }
@@ -162,6 +161,95 @@ public static class CampaignEndpoints
         return detail is null ? Results.NotFound() : Results.Ok(detail);
     }
 
+    /// <summary>
+    /// Sinh một job (delivery) cho mỗi người nhận và ghi vào DB trong cùng transaction với việc
+    /// chuyển trạng thái chiến dịch. Việc publish lên RabbitMQ do OutboxDispatcher làm, nên API trả về
+    /// ngay (202) và vẫn nhận start được khi RabbitMQ đang dừng.
+    /// </summary>
+    private static async Task<IResult> StartCampaign(
+        Guid id, NotificationDbContext db, OutboxSignal outboxSignal, ILoggerFactory loggerFactory, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        // Cập nhật có điều kiện: hai request start đồng thời thì chỉ một request thành công
+        var started = await db.Campaigns
+            .Where(c => c.Id == id && c.Status == CampaignStatus.Draft)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(c => c.Status, CampaignStatus.Running)
+                .SetProperty(c => c.StartedAt, now), ct);
+
+        if (started == 0)
+        {
+            var status = await db.Campaigns.Where(c => c.Id == id).Select(c => (CampaignStatus?)c.Status)
+                .FirstOrDefaultAsync(ct);
+            return status is null
+                ? Results.NotFound()
+                : Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Không thể start chiến dịch",
+                    detail: $"Chiến dịch đang ở trạng thái {status}, chỉ start được khi ở trạng thái {CampaignStatus.Draft}.");
+        }
+
+        // Sinh job hàng loạt bằng một câu INSERT ... SELECT; ON CONFLICT chặn job trùng
+        var jobCount = await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO deliveries ("Id", "CampaignId", "RecipientName", "RecipientAddress", "Status",
+                                    "AttemptCount", "CreatedAt", "UpdatedAt")
+            SELECT gen_random_uuid(), r."CampaignId", r."Name", r."Address", 'Pending', 0, {now}, {now}
+            FROM campaign_recipients AS r
+            WHERE r."CampaignId" = {id}
+            ON CONFLICT ("CampaignId", "RecipientAddress") DO NOTHING
+            """, ct);
+
+        await tx.CommitAsync(ct);
+        outboxSignal.Notify();
+
+        loggerFactory.CreateLogger(typeof(CampaignEndpoints)).LogInformation(
+            "Đã start chiến dịch {CampaignId}, sinh {JobCount} job chờ publish", id, jobCount);
+
+        return Results.Accepted($"/campaigns/{id}", new StartCampaignResponse(id, CampaignStatus.Running, jobCount));
+    }
+
+    private static async Task<IResult> ListDeliveries(
+        Guid id, NotificationDbContext db, CancellationToken ct, string? status, int page = 1,
+        int pageSize = DefaultPageSize)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (page < 1)
+            errors["page"] = ["page phải từ 1 trở lên."];
+        if (pageSize is < 1 or > MaxPageSize)
+            errors["pageSize"] = [$"pageSize phải trong khoảng 1–{MaxPageSize}."];
+
+        DeliveryStatus? statusFilter = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (Enum.TryParse<DeliveryStatus>(status, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed))
+                statusFilter = parsed;
+            else
+                errors["status"] = [$"status phải là một trong: {string.Join(", ", Enum.GetNames<DeliveryStatus>())}."];
+        }
+
+        if (errors.Count > 0)
+            return Results.ValidationProblem(errors);
+
+        if (!await db.Campaigns.AnyAsync(c => c.Id == id, ct))
+            return Results.NotFound();
+
+        var query = db.Deliveries.AsNoTracking().Where(d => d.CampaignId == id);
+        if (statusFilter is { } s)
+            query = query.Where(d => d.Status == s);
+
+        var totalItems = await query.CountAsync(ct);
+        var items = await query
+            .OrderBy(d => d.RecipientAddress)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(d => new DeliveryResponse(
+                d.Id, d.RecipientName, d.RecipientAddress, d.Status, d.AttemptCount, d.LastError, d.WorkerId,
+                d.CreatedAt, d.PublishedAt, d.SentAt, d.UpdatedAt))
+            .ToListAsync(ct);
+
+        return Results.Ok(new PagedResponse<DeliveryResponse>(items, page, pageSize, totalItems));
+    }
+
     // Số liệu được đếm trực tiếp từ bảng deliveries nên luôn đúng khi nhiều worker cập nhật song song
     private static readonly Expression<Func<CampaignEntity, CampaignSummaryResponse>> ToSummary = c =>
         new CampaignSummaryResponse(
@@ -180,7 +268,4 @@ public static class CampaignEndpoints
                 c.Deliveries.Count(d => d.Status == DeliveryStatus.Pending || d.Status == DeliveryStatus.Processing),
                 c.Deliveries.Count(d => d.Status == DeliveryStatus.Sent),
                 c.Deliveries.Count(d => d.Status == DeliveryStatus.Failed)));
-
-    private static IResult NotImplemented() =>
-        Results.Problem(statusCode: StatusCodes.Status501NotImplemented, title: "Chưa cài đặt");
 }
