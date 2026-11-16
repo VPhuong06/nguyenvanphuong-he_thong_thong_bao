@@ -69,6 +69,8 @@ services:
     environment:
       <<: [*db-env, *rabbitmq-env]
       RabbitMq__PrefetchCount: ${WORKER_PREFETCH:-10}
+      RabbitMq__ConsumerConcurrency: ${WORKER_CONCURRENCY:-1}
+      MockSender__FailureRate: ${MOCK_FAILURE_RATE:-0.1}
       DOTNET_ENVIRONMENT: Production
     depends_on:
       postgres:

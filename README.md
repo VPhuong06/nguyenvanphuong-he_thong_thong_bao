@@ -72,6 +72,8 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 | `RabbitMq__Host`, `RabbitMq__Port` | Địa chỉ RabbitMQ |
 | `RabbitMq__UserName`, `RabbitMq__Password` | Tài khoản RabbitMQ |
 | `RabbitMq__PrefetchCount` | Số job tối đa mỗi worker giữ chưa ack |
+| `RabbitMq__ConsumerConcurrency` | Số job mỗi worker xử lý song song |
+| `MockSender__FailureRate` | Tỉ lệ lỗi ngẫu nhiên của bộ gửi giả lập (0–1) |
 | `CampaignApi__BaseUrl` | URL Campaign API mà Admin Web gọi tới |
 
 Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbitmq`, `campaign-api`).
@@ -107,11 +109,29 @@ Content-Type: application/json
 - Người nhận trùng địa chỉ được tự loại bỏ.
 - Chiến dịch mới ở trạng thái `Draft`; `GET /campaigns?status=Draft&page=1&pageSize=20` hỗ trợ lọc và phân trang.
 
+## Luồng xử lý một chiến dịch
+
+1. `POST /campaigns/{id}/start` chuyển chiến dịch `Draft → Running` bằng câu UPDATE có điều kiện (start hai lần thì lần sau nhận 409) và sinh một job `Pending` cho mỗi người nhận, trong cùng transaction. API trả **202 Accepted** ngay.
+2. **Outbox dispatcher** trong Campaign API đọc các job chưa publish (`PublishedAt` null), publish lên `notify.jobs` với publisher confirms rồi mới đánh dấu `PublishedAt`. Nếu RabbitMQ đang dừng, job nằm an toàn trong DB và được publish bù khi broker chạy lại.
+3. **Worker** nhận job (ack thủ công, prefetch), **claim** job bằng UPDATE có điều kiện `Pending → Processing` để không gửi trùng khi message bị giao lại, gửi qua bộ gửi giả lập, ghi `Sent`/`Failed` và lịch sử `delivery_attempts`, sau đó mới ack.
+4. Khi không còn job `Pending`/`Processing`, chiến dịch chuyển sang `Completed` hoặc `CompletedWithFailures`.
+
+Khả năng phục hồi:
+
+| Thành phần dừng | Hành vi |
+|---|---|
+| Worker | Job chưa ack được RabbitMQ giao lại cho worker khác; job kẹt ở `Processing` được nhận lại sau khi lease 1 phút hết hạn |
+| RabbitMQ | API vẫn tạo và start chiến dịch; outbox publish bù khi broker chạy lại; worker tự kết nối lại |
+| PostgreSQL | Worker trả job về queue sau 5 giây thay vì ack, xử lý lại khi DB chạy lại |
+
+Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `MockSender__FailureRate`; địa chỉ chứa `fail` (ví dụ `fail01@example.com`) luôn thất bại để demo.
+
 ## Tiến độ
 
 - [x] Khung solution, model dữ liệu, cấu hình, logging, Docker
 - [x] Tạo / xem chiến dịch
-- [ ] Start chiến dịch, publish job
-- [ ] Worker xử lý job, ghi kết quả
+- [x] Start chiến dịch, publish job (outbox)
+- [x] Worker xử lý job, ghi kết quả
+- [x] Tra cứu kết quả gửi chi tiết
 - [ ] Chạy lại job thất bại
 - [ ] Giao diện Admin Web

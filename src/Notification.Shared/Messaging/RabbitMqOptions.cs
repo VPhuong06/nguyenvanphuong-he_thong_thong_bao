@@ -12,4 +12,7 @@ public sealed class RabbitMqOptions
 
     /// <summary>Số message tối đa một worker giữ chưa ack (basic.qos).</summary>
     public ushort PrefetchCount { get; set; } = 10;
+
+    /// <summary>Số job một worker xử lý song song.</summary>
+    public ushort ConsumerConcurrency { get; set; } = 1;
 }
