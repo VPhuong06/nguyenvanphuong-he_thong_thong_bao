@@ -41,6 +41,9 @@ public sealed class CampaignApiClient(HttpClient http, ILogger<CampaignApiClient
     public Task<IReadOnlyList<ContactItem>> ListContactsAsync(CancellationToken ct = default) =>
         GetAsync<IReadOnlyList<ContactItem>>("contacts", ct);
 
+    public Task<TelegramInfo> GetTelegramInfoAsync(CancellationToken ct = default) =>
+        GetAsync<TelegramInfo>("telegram", ct);
+
     public Task<CampaignDetail> CreateCampaignAsync(CreateCampaignRequest request, CancellationToken ct = default) =>
         PostAsync<CampaignDetail>("campaigns", request, ct);
 

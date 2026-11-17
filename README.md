@@ -82,7 +82,8 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 | `RabbitMq__PrefetchCount` | Số job tối đa mỗi worker giữ chưa ack |
 | `RabbitMq__ConsumerConcurrency` | Số job mỗi worker xử lý song song |
 | `MockSender__FailureRate` | Tỉ lệ lỗi ngẫu nhiên của bộ gửi giả lập (0–1) |
-| `Sender__Mode` | `Mock` hoặc `Smtp` (trong compose đặt qua `SENDER_MODE`) |
+| `Sender__Mode` | `Mock` hoặc `Real` (trong compose đặt qua `SENDER_MODE`) |
+| `Telegram__BotToken` | Token bot Telegram (trong compose đặt qua `TELEGRAM_BOT_TOKEN`) |
 | `Smtp__Host`, `Smtp__Port`, `Smtp__UserName`, `Smtp__Password`, `Smtp__FromAddress`, `Smtp__FromName` | Máy chủ và tài khoản SMTP khi gửi email thật |
 | `CampaignApi__BaseUrl` | URL Campaign API mà Admin Web gọi tới |
 | `ConnectionStrings__Statistics` | Chuỗi kết nối database riêng của service thống kê |
@@ -130,6 +131,7 @@ Schema DB được tạo tự động khi Campaign API khởi động lần đ�
 | GET | `/deliveries/{id}` | Chi tiết một job và lịch sử từng lần gửi |
 | POST | `/deliveries/{id}/retry` | Chạy lại một job thất bại |
 | GET | `/contacts` | Danh bạ để chọn người nhận (tự tạo 20 liên hệ mẫu khi DB trống) |
+| GET | `/telegram` | Thông tin bot Telegram (tên, đường dẫn) để người nhận đăng ký |
 
 Ví dụ tạo chiến dịch, chọn người nhận từ danh bạ và nhập thêm trực tiếp:
 
@@ -221,16 +223,31 @@ Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `Mock
 MOCK_FAILURE_RATE=0.5 docker compose up -d --scale notification-worker=3
 ```
 
-## Gửi email thật
+## Gửi thông báo thật
 
-Worker có hai bộ gửi, chọn bằng `SENDER_MODE` trong `.env`:
+Chế độ gửi chọn bằng `SENDER_MODE` trong `.env`:
 
-| `SENDER_MODE` | Hành vi |
-|---|---|
-| `Mock` (mặc định) | Giả lập, không gửi thật |
-| `Smtp` | Kênh Email gửi thật qua SMTP (MailKit); kênh SMS vẫn giả lập vì gửi SMS thật cần nhà cung cấp trả phí |
+| `SENDER_MODE` | Email | Telegram | SMS |
+|---|---|---|---|
+| `Mock` (mặc định) | Giả lập | Giả lập | Giả lập |
+| `Real` (hoặc `Smtp` như bản trước) | Gửi thật qua SMTP (MailKit) | Gửi thật qua Telegram Bot API | Báo lỗi "chưa tích hợp nhà cung cấp" |
 
-**Thử an toàn với Mailpit** (máy chủ SMTP giả, email chỉ hiện trong hộp thư web, không tới người nhận thật). Trong `.env` đặt `SENDER_MODE=Smtp`, `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, `SMTP_FROM=noreply@example.com`, để trống `SMTP_USER`/`SMTP_PASSWORD`, rồi:
+Ở chế độ `Real`, kênh chưa cấu hình (thiếu SMTP hoặc token bot) và kênh SMS **báo thất bại kèm lý do**, không giả vờ đã gửi. Gửi SMS thật cần nhà cung cấp trả phí (eSMS, SpeedSMS, Twilio…) nên chưa tích hợp; trang tạo chiến dịch cũng ghi rõ SMS chỉ là giả lập.
+
+### Telegram
+
+1. Trên Telegram, nhắn `/newbot` cho **@BotFather**, đặt tên bot, nhận **token** dạng `123456789:AA...`.
+2. Trong `.env` (không đưa lên Git): `SENDER_MODE=Real`, `TELEGRAM_BOT_TOKEN=<token>`, rồi `docker compose up -d --build --scale notification-worker=3`.
+3. Người nhận mở bot (Admin Web hiện đường dẫn `t.me/<tên bot>` khi chọn kênh Telegram) và bấm **Start**: Campaign API nhận lệnh `/start` qua long polling (`getUpdates`), thêm người đó vào danh bạ kèm chat ID và trả lời xác nhận. Nhắn `/stop` để huỷ đăng ký.
+4. Tạo chiến dịch kênh **Telegram**, chọn người nhận trong danh bạ (hoặc nhập chat ID). Tin nhắn hiện tiêu đề in đậm và nội dung.
+
+Lỗi Telegram được phân loại: 400 (chat không tồn tại) và 403 (người nhận đã chặn bot) là lỗi vĩnh viễn; 429 (gửi quá nhanh), lỗi máy chủ hoặc mất kết nối là lỗi tạm thời và được tự thử lại. URL của Bot API chứa token nên log của HttpClient gọi Telegram được tắt.
+
+Chỉ Campaign API gọi `getUpdates` (Telegram chỉ cho một tiến trình nhận tin của một bot); các worker chỉ gọi `sendMessage`, nên scale worker không ảnh hưởng.
+
+### Email
+
+**Thử an toàn với Mailpit** (máy chủ SMTP giả, email chỉ hiện trong hộp thư web, không tới người nhận thật). Trong `.env` đặt `SENDER_MODE=Real`, `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, `SMTP_FROM=noreply@example.com`, để trống `SMTP_USER`/`SMTP_PASSWORD`, rồi:
 
 ```bash
 docker compose --profile mailtest up -d --scale notification-worker=3
@@ -241,8 +258,8 @@ Xem email đã gửi tại http://localhost:8025.
 **Gửi thật qua Gmail:**
 
 1. Bật xác minh 2 bước cho tài khoản Gmail, tạo **App Password** tại https://myaccount.google.com/apppasswords.
-2. Trong `.env` (không đưa lên Git): `SENDER_MODE=Smtp`, `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USER=<địa chỉ Gmail>`, `SMTP_PASSWORD=<App Password>`, `SMTP_FROM=<địa chỉ Gmail>`.
-3. Khởi động lại worker: `docker compose up -d --scale notification-worker=3`. Log worker ghi "Chế độ gửi: email thật qua SMTP smtp.gmail.com:587".
+2. Trong `.env` (không đưa lên Git): `SENDER_MODE=Real`, `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USER=<địa chỉ Gmail>`, `SMTP_PASSWORD=<App Password>`, `SMTP_FROM=<địa chỉ Gmail>`.
+3. Khởi động lại worker: `docker compose up -d --scale notification-worker=3`. Log worker ghi "Chế độ gửi: gửi thật — Email: SMTP smtp.gmail.com:587, …".
 
 Lưu ý:
 
@@ -262,3 +279,4 @@ Lưu ý:
 - [x] Mở rộng: tự động thử lại có backoff và dead-letter queue
 - [x] Mở rộng: health check, correlation ID, structured logging
 - [x] Mở rộng: service thống kê nhận event qua Publish–subscribe
+- [x] Gửi thật: Email qua SMTP, Telegram qua bot (đăng ký bằng /start)

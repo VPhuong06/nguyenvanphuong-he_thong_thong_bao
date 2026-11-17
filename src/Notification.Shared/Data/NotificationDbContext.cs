@@ -20,6 +20,8 @@ public class NotificationDbContext(DbContextOptions<NotificationDbContext> optio
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.Email).HasMaxLength(320);
             e.Property(x => x.Phone).HasMaxLength(30);
+            e.Property(x => x.TelegramChatId).HasMaxLength(64);
+            e.HasIndex(x => x.TelegramChatId).IsUnique();
         });
 
         b.Entity<Campaign>(e =>

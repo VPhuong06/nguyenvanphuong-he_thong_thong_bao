@@ -32,6 +32,13 @@ public static partial class RecipientAddress
                 normalized = phone;
                 return true;
 
+            case NotificationChannel.Telegram:
+                // Chat ID dạng số (âm với nhóm) hoặc @username của kênh công khai
+                if (!TelegramChatPattern().IsMatch(value))
+                    return false;
+                normalized = value.StartsWith('@') ? value.ToLowerInvariant() : value;
+                return true;
+
             default:
                 return false;
         }
@@ -42,4 +49,7 @@ public static partial class RecipientAddress
 
     [GeneratedRegex(@"^\+?[0-9]{8,15}$")]
     private static partial Regex PhonePattern();
+
+    [GeneratedRegex(@"^(-?[0-9]{5,20}|@[A-Za-z0-9_]{5,32})$")]
+    private static partial Regex TelegramChatPattern();
 }

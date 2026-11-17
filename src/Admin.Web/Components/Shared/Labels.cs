@@ -30,6 +30,7 @@ public static class Labels
     {
         NotificationChannel.Email => "Email",
         NotificationChannel.Sms => "SMS",
+        NotificationChannel.Telegram => "Telegram",
         _ => channel.ToString()
     };
 

@@ -3,7 +3,8 @@ namespace Notification.Shared.Domain;
 public enum NotificationChannel
 {
     Email,
-    Sms
+    Sms,
+    Telegram
 }
 
 public enum CampaignStatus

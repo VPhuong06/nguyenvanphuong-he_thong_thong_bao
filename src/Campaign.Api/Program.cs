@@ -2,10 +2,12 @@ using System.Text.Json.Serialization;
 using Campaign.Api.Endpoints;
 using Campaign.Api.Infrastructure;
 using Campaign.Api.Messaging;
+using Campaign.Api.Telegram;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Notification.Shared.Data;
 using Notification.Shared.Logging;
 using Notification.Shared.Messaging;
+using Notification.Shared.Telegram;
 using Serilog;
 using Serilog.Events;
 
@@ -21,6 +23,13 @@ builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(Rab
 builder.Services.AddSingleton<RabbitMqPublisher>();
 builder.Services.AddSingleton<OutboxSignal>();
 builder.Services.AddHostedService<OutboxDispatcher>();
+
+builder.Services.Configure<TelegramOptions>(builder.Configuration.GetSection(TelegramOptions.SectionName));
+// URL của Bot API chứa token, nên tắt log của HttpClient này
+builder.Services.AddHttpClient(TelegramApi.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(40))
+    .RemoveAllLoggers();
+builder.Services.AddSingleton<TelegramBotInfo>();
+builder.Services.AddHostedService<TelegramBotListener>();
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();

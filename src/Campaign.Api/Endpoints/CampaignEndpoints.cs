@@ -75,8 +75,12 @@ public static class CampaignEndpoints
                 errors["contactIds"] = [$"Không tìm thấy liên hệ: {string.Join(", ", missing)}"];
 
             foreach (var contact in contacts.OrderBy(c => c.Name))
-                AddRecipient(contact.Id, contact.Name,
-                    request.Channel == NotificationChannel.Email ? contact.Email : contact.Phone);
+                AddRecipient(contact.Id, contact.Name, request.Channel switch
+                {
+                    NotificationChannel.Email => contact.Email,
+                    NotificationChannel.Telegram => contact.TelegramChatId,
+                    _ => contact.Phone
+                });
         }
 
         foreach (var input in request.Recipients ?? [])

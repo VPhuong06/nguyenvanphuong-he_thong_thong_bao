@@ -63,7 +63,9 @@ public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSi
     public int TotalPages => Math.Max(1, (int)Math.Ceiling(TotalItems / (double)PageSize));
 }
 
-public sealed record ContactItem(Guid Id, string Name, string? Email, string? Phone);
+public sealed record ContactItem(Guid Id, string Name, string? Email, string? Phone, string? TelegramChatId);
+
+public sealed record TelegramInfo(bool Enabled, string? BotUsername, string? BotLink);
 
 public sealed record RecipientInput(string? Name, string Address);
 

@@ -53,6 +53,7 @@ services:
       dockerfile: src/Campaign.Api/Dockerfile
     environment:
       <<: [*db-env, *rabbitmq-env]
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-}
       ASPNETCORE_ENVIRONMENT: Production
       Logging__Format: ${LOG_FORMAT:-text}
     ports:
@@ -81,7 +82,7 @@ services:
       RabbitMq__PrefetchCount: ${WORKER_PREFETCH:-10}
       RabbitMq__ConsumerConcurrency: ${WORKER_CONCURRENCY:-1}
       MockSender__FailureRate: ${MOCK_FAILURE_RATE:-0.1}
-      # Gửi email thật: SENDER_MODE=Smtp và điền thông tin SMTP trong .env
+      # Gửi thật: SENDER_MODE=Real và điền thông tin SMTP / Telegram trong .env
       Sender__Mode: ${SENDER_MODE:-Mock}
       Smtp__Host: ${SMTP_HOST:-}
       Smtp__Port: ${SMTP_PORT:-587}
@@ -89,6 +90,7 @@ services:
       Smtp__Password: ${SMTP_PASSWORD:-}
       Smtp__FromAddress: ${SMTP_FROM:-}
       Smtp__FromName: ${SMTP_FROM_NAME:-Hệ thống gửi thông báo}
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-}
       DOTNET_ENVIRONMENT: Production
       Logging__Format: ${LOG_FORMAT:-text}
     depends_on:

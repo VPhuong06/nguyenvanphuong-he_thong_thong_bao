@@ -7,6 +7,10 @@ public class Contact
     public required string Name { get; set; }
     public string? Email { get; set; }
     public string? Phone { get; set; }
+
+    /// <summary>Chat ID Telegram, có khi người nhận nhắn /start cho bot của hệ thống.</summary>
+    public string? TelegramChatId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }
 

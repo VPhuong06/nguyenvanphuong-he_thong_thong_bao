@@ -38,8 +38,29 @@
             <span>Kênh gửi</span>
             <select class="input" @bind="_channel">
                 <option value="@NotificationChannel.Email">Email</option>
+                <option value="@NotificationChannel.Telegram">Telegram</option>
                 <option value="@NotificationChannel.Sms">SMS</option>
             </select>
+            @if (_channel == NotificationChannel.Sms)
+            {
+                <small class="note note-warning">
+                    Kênh SMS hiện chỉ giả lập: chưa tích hợp nhà cung cấp gửi tin nhắn thật, điện thoại sẽ không nhận được tin.
+                </small>
+            }
+            else if (_channel == NotificationChannel.Telegram)
+            {
+                <small class="note">
+                    @if (_telegram is { Enabled: true })
+                    {
+                        <text>Người nhận mở <a href="@_telegram.BotLink" target="_blank">@("@" + _telegram.BotUsername)</a>
+                        và bấm <b>Start</b> để vào danh bạ (kèm chat ID).</text>
+                    }
+                    else
+                    {
+                        <text>Chưa cấu hình bot Telegram (<code>TELEGRAM_BOT_TOKEN</code>), nên chưa nhận được đăng ký qua bot.</text>
+                    }
+                </small>
+            }
         </label>
 
         <label class="field">
@@ -60,11 +81,11 @@
 
         <div class="field">
             <div class="field-head">
-                <span>Chọn từ danh bạ (@_selected.Count / @(_contacts?.Count ?? 0))</span>
-                @if (_contacts is { Count: > 0 })
+                <span>Chọn từ danh bạ (@SelectedContactIds.Count / @VisibleContacts.Count)</span>
+                @if (VisibleContacts.Count > 0)
                 {
                     <button class="btn btn-small" type="button" @onclick="ToggleAll">
-                        @(_selected.Count == _contacts.Count ? "Bỏ chọn tất cả" : "Chọn tất cả")
+                        @(SelectedContactIds.Count == VisibleContacts.Count ? "Bỏ chọn tất cả" : "Chọn tất cả")
                     </button>
                 }
             </div>
@@ -73,20 +94,23 @@
                 {
                     <p class="muted small">Đang tải danh bạ…</p>
                 }
-                else if (_contacts.Count == 0)
+                else if (VisibleContacts.Count == 0)
                 {
-                    <p class="muted small">Danh bạ trống.</p>
+                    <p class="muted small">
+                        @(_channel == NotificationChannel.Telegram
+                            ? "Chưa có ai đăng ký Telegram. Người nhận cần nhắn /start cho bot."
+                            : "Không có liên hệ nào có địa chỉ cho kênh này.")
+                    </p>
                 }
                 else
                 {
-                    @foreach (var contact in _contacts)
+                    @foreach (var contact in VisibleContacts)
                     {
-                        var address = _channel == NotificationChannel.Email ? contact.Email : contact.Phone;
                         <label class="contact">
                             <input type="checkbox" checked="@_selected.Contains(contact.Id)"
                                    @onchange="() => Toggle(contact.Id)" />
                             <span>@contact.Name</span>
-                            <span class="muted small">@(address ?? "(không có địa chỉ)")</span>
+                            <span class="muted small">@AddressOf(contact)</span>
                         </label>
                     }
                 }
@@ -123,9 +147,28 @@
     private string? _error;
     private IReadOnlyDictionary<string, string[]> _fieldErrors = new Dictionary<string, string[]>();
 
-    private string ManualPlaceholder => _channel == NotificationChannel.Email
-        ? "Nguyễn Văn An <an@example.com>\nbinh@example.com\nfail01@example.com"
-        : "Nguyễn Văn An, 0901234567\n+84912345678";
+    private TelegramInfo? _telegram;
+
+    private string ManualPlaceholder => _channel switch
+    {
+        NotificationChannel.Email => "Nguyễn Văn An <an@example.com>\nbinh@example.com\nfail01@example.com",
+        NotificationChannel.Telegram => "Nguyễn Văn An, 123456789\n987654321",
+        _ => "Nguyễn Văn An, 0901234567\n+84912345678"
+    };
+
+    private string? AddressOf(ContactItem contact) => _channel switch
+    {
+        NotificationChannel.Email => contact.Email,
+        NotificationChannel.Telegram => contact.TelegramChatId,
+        _ => contact.Phone
+    };
+
+    /// <summary>Chỉ hiện liên hệ có địa chỉ cho kênh đang chọn.</summary>
+    private List<ContactItem> VisibleContacts =>
+        _contacts?.Where(c => !string.IsNullOrWhiteSpace(AddressOf(c))).ToList() ?? [];
+
+    private List<Guid> SelectedContactIds =>
+        VisibleContacts.Where(c => _selected.Contains(c.Id)).Select(c => c.Id).ToList();
 
     private List<RecipientInput> ManualRecipients => _manual
         .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -137,10 +180,11 @@
         try
         {
             _contacts = await Api.ListContactsAsync();
+            _telegram = await Api.GetTelegramInfoAsync();
         }
         catch (ApiException ex)
         {
-            _contacts = [];
+            _contacts ??= [];
             _error = ex.Message;
         }
     }
@@ -153,12 +197,11 @@
 
     private void ToggleAll()
     {
-        if (_contacts is null)
-            return;
-        if (_selected.Count == _contacts.Count)
-            _selected.Clear();
+        var visible = VisibleContacts.Select(c => c.Id).ToList();
+        if (SelectedContactIds.Count == visible.Count)
+            _selected.ExceptWith(visible);
         else
-            _selected.UnionWith(_contacts.Select(c => c.Id));
+            _selected.UnionWith(visible);
     }
 
     private async Task SubmitAsync(bool startNow)
@@ -170,7 +213,7 @@
         try
         {
             var campaign = await Api.CreateCampaignAsync(new CreateCampaignRequest(
-                _name, _channel, _subject, _content, _selected.ToList(), ManualRecipients));
+                _name, _channel, _subject, _content, SelectedContactIds, ManualRecipients));
 
             if (startNow)
             {

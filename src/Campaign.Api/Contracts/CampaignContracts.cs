@@ -76,4 +76,7 @@ public sealed record RetryFailedResponse(
 
 public sealed record PagedResponse<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalItems);
 
-public sealed record ContactResponse(Guid Id, string Name, string? Email, string? Phone);
+public sealed record ContactResponse(Guid Id, string Name, string? Email, string? Phone, string? TelegramChatId);
+
+/// <param name="BotUsername">Tên bot để người nhận tìm và nhắn /start; null khi chưa cấu hình bot.</param>
+public sealed record TelegramInfoResponse(bool Enabled, string? BotUsername, string? BotLink);

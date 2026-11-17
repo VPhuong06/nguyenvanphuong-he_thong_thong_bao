@@ -128,12 +128,3 @@ public sealed class SmtpNotificationSender(IOptions<SmtpOptions> options, ILogge
         _lock.Dispose();
     }
 }
-
-/// <summary>Chọn bộ gửi theo kênh: email gửi thật qua SMTP, SMS vẫn giả lập (cần nhà cung cấp trả phí).</summary>
-public sealed class ChannelRouterSender(SmtpNotificationSender email, MockNotificationSender mock) : INotificationSender
-{
-    public Task<SendResult> SendAsync(SendRequest request, CancellationToken ct) =>
-        request.Channel == Shared.Domain.NotificationChannel.Email
-            ? email.SendAsync(request, ct)
-            : mock.SendAsync(request, ct);
-}
