@@ -84,6 +84,7 @@ code { background: #eef0f4; padding: 0 4px; border-radius: 4px; font-size: 12px;
 .badge-warning { background: #fdf2d6; color: #8a6200; }
 .badge-danger { background: #fbe4e4; color: #a32b2b; }
 .tag { display: inline-block; background: #eef0f4; color: #4b5563; border-radius: 4px; padding: 0 6px; margin-right: 6px; font-size: 11px; }
+.tag-retry { background: #fdf2d6; color: #8a6200; }
 
 /* Bảng */
 .table { width: 100%; border-collapse: collapse; }

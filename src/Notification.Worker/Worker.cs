@@ -22,6 +22,10 @@ public class Worker(
     // Hostname khác nhau giữa các container khi scale, dùng để biết job do worker nào xử lý
     private readonly string _workerId = Environment.MachineName;
 
+    // Kênh riêng (có publisher confirms) để đẩy job vào retry queue
+    private readonly SemaphoreSlim _publishLock = new(1, 1);
+    private IChannel? _publishChannel;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var opts = options.Value;
@@ -31,6 +35,10 @@ public class Worker(
             new CreateChannelOptions(publisherConfirmationsEnabled: false, publisherConfirmationTrackingEnabled: false,
                 consumerDispatchConcurrency: opts.ConsumerConcurrency),
             stoppingToken);
+        await using var publishChannel = await connection.CreateChannelAsync(
+            new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true),
+            stoppingToken);
+        _publishChannel = publishChannel;
 
         await RabbitMqTopology.DeclareAsync(channel, stoppingToken);
         await channel.BasicQosAsync(prefetchSize: 0, prefetchCount: opts.PrefetchCount, global: false,
@@ -60,8 +68,9 @@ public class Worker(
 
         if (message is null)
         {
-            // Message hỏng không bao giờ xử lý được: bỏ đi thay vì trả về queue mãi
-            logger.LogError("Message {MessageId} không đọc được, loại bỏ", ea.BasicProperties.MessageId);
+            // Message hỏng không bao giờ xử lý được: reject để RabbitMQ chuyển vào DLQ thay vì trả về queue mãi
+            logger.LogError("Message {MessageId} không đọc được, chuyển vào {Dlq}",
+                ea.BasicProperties.MessageId, RabbitMqTopology.DeadLetterQueue);
             await channel.BasicRejectAsync(ea.DeliveryTag, requeue: false, ct);
             return;
         }
@@ -76,17 +85,34 @@ public class Worker(
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var processor = scope.ServiceProvider.GetRequiredService<JobProcessor>();
-            var outcome = await processor.ProcessAsync(message, _workerId, ct);
+            var result = await processor.ProcessAsync(message, _workerId, ct);
 
-            if (outcome == JobOutcome.HeldByOtherWorker)
+            switch (result.Outcome)
             {
-                await Task.Delay(RequeueDelay, ct);
-                await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true, ct);
-                return;
-            }
+                case JobOutcome.HeldByOtherWorker:
+                    await Task.Delay(RequeueDelay, ct);
+                    await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true, ct);
+                    return;
 
-            // Chỉ ack sau khi kết quả đã ghi vào DB: worker chết trước bước này thì RabbitMQ giao lại job
-            await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
+                case JobOutcome.RetryScheduled:
+                    // Đẩy vào retry queue trước rồi mới ack message gốc: nếu publish lỗi, message gốc
+                    // được trả lại queue và job (đang Pending) vẫn được xử lý tiếp
+                    await PublishRetryAsync(message, result.Retry!, ct);
+                    await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
+                    return;
+
+                case JobOutcome.Failed:
+                    // Thất bại cuối cùng: kết quả đã ghi trong DB, reject để message vào DLQ phục vụ kiểm tra
+                    await channel.BasicRejectAsync(ea.DeliveryTag, requeue: false, ct);
+                    logger.LogInformation("Job {DeliveryId} thất bại cuối cùng, message chuyển vào {Dlq}",
+                        message.DeliveryId, RabbitMqTopology.DeadLetterQueue);
+                    return;
+
+                default:
+                    // Chỉ ack sau khi kết quả đã ghi vào DB: worker chết trước bước này thì RabbitMQ giao lại job
+                    await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
+                    return;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -105,6 +131,30 @@ public class Worker(
             {
                 // Worker đang dừng: job chưa ack sẽ được giao lại
             }
+        }
+    }
+
+    private async Task PublishRetryAsync(SendNotificationMessage message, RetryQueue retry, CancellationToken ct)
+    {
+        var props = new BasicProperties
+        {
+            Persistent = true,
+            ContentType = "application/json",
+            Type = nameof(SendNotificationMessage),
+            MessageId = message.DeliveryId.ToString(),
+            CorrelationId = message.CampaignId.ToString()
+        };
+        var body = JsonSerializer.SerializeToUtf8Bytes(message with { Attempt = message.Attempt + 1 });
+
+        await _publishLock.WaitAsync(ct);
+        try
+        {
+            await _publishChannel!.BasicPublishAsync(RabbitMqTopology.RetryExchange, retry.RoutingKey,
+                mandatory: true, basicProperties: props, body: body, cancellationToken: ct);
+        }
+        finally
+        {
+            _publishLock.Release();
         }
     }
 }

@@ -193,8 +193,8 @@ public static class CampaignEndpoints
         // Sinh job hàng loạt bằng một câu INSERT ... SELECT; ON CONFLICT chặn job trùng
         var jobCount = await db.Database.ExecuteSqlAsync($"""
             INSERT INTO deliveries ("Id", "CampaignId", "RecipientName", "RecipientAddress", "Status",
-                                    "AttemptCount", "CreatedAt", "UpdatedAt")
-            SELECT gen_random_uuid(), r."CampaignId", r."Name", r."Address", 'Pending', 0, {now}, {now}
+                                    "AttemptCount", "AutoRetryCount", "CreatedAt", "UpdatedAt")
+            SELECT gen_random_uuid(), r."CampaignId", r."Name", r."Address", 'Pending', 0, 0, {now}, {now}
             FROM campaign_recipients AS r
             WHERE r."CampaignId" = {id}
             ON CONFLICT ("CampaignId", "RecipientAddress") DO NOTHING

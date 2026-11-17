@@ -52,6 +52,12 @@ public class Delivery
     public string? LastError { get; set; }
     public FailureKind? FailureKind { get; set; }
 
+    /// <summary>Số lần đã tự thử lại trong lượt hiện tại; đặt về 0 khi admin chạy lại thủ công.</summary>
+    public int AutoRetryCount { get; set; }
+
+    /// <summary>Thời điểm job sẽ được tự thử lại (đang nằm trong retry queue).</summary>
+    public DateTimeOffset? NextRetryAt { get; set; }
+
     /// <summary>Worker đang giữ hoặc đã xử lý job.</summary>
     public string? WorkerId { get; set; }
 

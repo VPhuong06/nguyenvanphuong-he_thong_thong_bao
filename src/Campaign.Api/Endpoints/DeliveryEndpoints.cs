@@ -80,5 +80,5 @@ public static class DeliveryEndpoints
     internal static readonly Expression<Func<Delivery, DeliveryResponse>> ToResponse = d =>
         new DeliveryResponse(
             d.Id, d.RecipientName, d.RecipientAddress, d.Status, d.AttemptCount, d.LastError, d.FailureKind,
-            d.WorkerId, d.CreatedAt, d.PublishedAt, d.SentAt, d.UpdatedAt);
+            d.WorkerId, d.CreatedAt, d.PublishedAt, d.SentAt, d.NextRetryAt, d.UpdatedAt);
 }

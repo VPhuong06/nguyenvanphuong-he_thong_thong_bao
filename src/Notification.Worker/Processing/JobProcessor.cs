@@ -9,7 +9,12 @@ namespace Notification.Worker.Processing;
 public enum JobOutcome
 {
     Sent,
+
+    /// <summary>Thất bại cuối cùng (lỗi vĩnh viễn hoặc đã hết lượt tự thử lại).</summary>
     Failed,
+
+    /// <summary>Lỗi tạm thời, job được đưa vào retry queue để tự thử lại sau.</summary>
+    RetryScheduled,
 
     /// <summary>Job đã xong (Sent/Failed) hoặc không còn tồn tại: bỏ qua, chỉ ack.</summary>
     Skipped,
@@ -20,6 +25,9 @@ public enum JobOutcome
     /// </summary>
     HeldByOtherWorker
 }
+
+/// <param name="Retry">Retry queue cần đẩy job vào khi Outcome là RetryScheduled.</param>
+public sealed record JobResult(JobOutcome Outcome, RetryQueue? Retry = null);
 
 /// <summary>Xử lý một job gửi thông báo. Được tạo trong scope riêng cho mỗi message.</summary>
 public sealed class JobProcessor(
@@ -33,7 +41,7 @@ public sealed class JobProcessor(
     /// </summary>
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(1);
 
-    public async Task<JobOutcome> ProcessAsync(SendNotificationMessage message, string workerId, CancellationToken ct)
+    public async Task<JobResult> ProcessAsync(SendNotificationMessage message, string workerId, CancellationToken ct)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var leaseExpired = startedAt - Lease;
@@ -48,6 +56,7 @@ public sealed class JobProcessor(
                 .SetProperty(d => d.WorkerId, workerId)
                 .SetProperty(d => d.LockedAt, startedAt)
                 .SetProperty(d => d.AttemptCount, d => d.AttemptCount + 1)
+                .SetProperty(d => d.NextRetryAt, (DateTimeOffset?)null)
                 .SetProperty(d => d.UpdatedAt, startedAt), ct);
 
         if (claimed == 0)
@@ -61,19 +70,20 @@ public sealed class JobProcessor(
             {
                 logger.LogInformation("Job {DeliveryId} đang do worker {OtherWorker} giữ, trả lại queue",
                     message.DeliveryId, current.WorkerId);
-                return JobOutcome.HeldByOtherWorker;
+                return new JobResult(JobOutcome.HeldByOtherWorker);
             }
 
             logger.LogInformation("Bỏ qua job {DeliveryId}: đã xử lý xong ({Status})",
                 message.DeliveryId, current?.Status.ToString() ?? "không tồn tại");
-            return JobOutcome.Skipped;
+            return new JobResult(JobOutcome.Skipped);
         }
 
         var job = await db.Deliveries.AsNoTracking()
             .Where(d => d.Id == message.DeliveryId)
             .Join(db.Campaigns, d => d.CampaignId, c => c.Id, (d, c) => new
             {
-                d.RecipientName, d.RecipientAddress, d.AttemptCount, c.Channel, c.Subject, c.Content
+                d.RecipientName, d.RecipientAddress, d.AttemptCount, d.AutoRetryCount,
+                c.Channel, c.Subject, c.Content
             })
             .FirstAsync(ct);
 
@@ -84,7 +94,18 @@ public sealed class JobProcessor(
             Render(job.Content, job.RecipientName, job.RecipientAddress)), ct);
 
         var finishedAt = DateTimeOffset.UtcNow;
-        var newStatus = result.Succeeded ? DeliveryStatus.Sent : DeliveryStatus.Failed;
+
+        // Lỗi tạm thời và còn lượt: đưa job về Pending chờ trong retry queue, chờ lâu hơn sau mỗi lần
+        var retry = !result.Succeeded && result.FailureKind == FailureKind.Transient &&
+                    job.AutoRetryCount < RabbitMqTopology.RetryQueues.Count
+            ? RabbitMqTopology.RetryQueues[job.AutoRetryCount]
+            : null;
+
+        var newStatus = result.Succeeded ? DeliveryStatus.Sent
+            : retry is not null ? DeliveryStatus.Pending
+            : DeliveryStatus.Failed;
+        DateTimeOffset? nextRetryAt = retry is null ? null : finishedAt + retry.Delay;
+        var autoRetryIncrement = retry is null ? 0 : 1;
 
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
@@ -96,6 +117,8 @@ public sealed class JobProcessor(
                     .SetProperty(d => d.FailureKind, result.FailureKind)
                     .SetProperty(d => d.SentAt, result.Succeeded ? finishedAt : null)
                     .SetProperty(d => d.LockedAt, (DateTimeOffset?)null)
+                    .SetProperty(d => d.NextRetryAt, nextRetryAt)
+                    .SetProperty(d => d.AutoRetryCount, d => d.AutoRetryCount + autoRetryIncrement)
                     .SetProperty(d => d.UpdatedAt, finishedAt), ct);
 
             db.DeliveryAttempts.Add(new DeliveryAttempt
@@ -115,12 +138,20 @@ public sealed class JobProcessor(
         if (result.Succeeded)
             logger.LogInformation("Worker {WorkerId} đã gửi job {DeliveryId} tới {Address} ({Duration} ms)",
                 workerId, message.DeliveryId, job.RecipientAddress, (int)(finishedAt - startedAt).TotalMilliseconds);
+        else if (retry is not null)
+            logger.LogWarning(
+                "Worker {WorkerId} gửi job {DeliveryId} tới {Address} lỗi tạm thời: {Error}. Tự thử lại sau {Delay}s (lần {Retry}/{MaxRetry})",
+                workerId, message.DeliveryId, job.RecipientAddress, result.Error, retry.Delay.TotalSeconds,
+                job.AutoRetryCount + 1, RabbitMqTopology.RetryQueues.Count);
         else
             logger.LogWarning("Worker {WorkerId} gửi job {DeliveryId} tới {Address} thất bại ({FailureKind}): {Error}",
                 workerId, message.DeliveryId, job.RecipientAddress, result.FailureKind, result.Error);
 
+        if (retry is not null)
+            return new JobResult(JobOutcome.RetryScheduled, retry);
+
         await TryCompleteCampaignAsync(message.CampaignId, ct);
-        return result.Succeeded ? JobOutcome.Sent : JobOutcome.Failed;
+        return new JobResult(result.Succeeded ? JobOutcome.Sent : JobOutcome.Failed);
     }
 
     /// <summary>

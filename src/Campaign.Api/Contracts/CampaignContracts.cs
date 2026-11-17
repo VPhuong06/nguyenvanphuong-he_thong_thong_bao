@@ -54,6 +54,7 @@ public sealed record DeliveryResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset? PublishedAt,
     DateTimeOffset? SentAt,
+    DateTimeOffset? NextRetryAt,
     DateTimeOffset UpdatedAt);
 
 public sealed record DeliveryAttemptResponse(

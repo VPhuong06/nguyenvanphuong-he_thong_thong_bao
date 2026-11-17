@@ -45,6 +45,7 @@ public sealed record DeliveryItem(
     DateTimeOffset CreatedAt,
     DateTimeOffset? PublishedAt,
     DateTimeOffset? SentAt,
+    DateTimeOffset? NextRetryAt,
     DateTimeOffset UpdatedAt);
 
 public sealed record DeliveryAttemptItem(

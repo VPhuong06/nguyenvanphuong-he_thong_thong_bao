@@ -116,6 +116,11 @@
                                     }
                                     @d.LastError
                                 }
+                                else if (d.Status == DeliveryStatus.Pending && d.NextRetryAt is not null)
+                                {
+                                    <span class="tag tag-retry">Tự thử lại lúc @Labels.ShortTime(d.NextRetryAt)</span>
+                                    @d.LastError
+                                }
                             </td>
                             <td class="nowrap small">@Labels.ShortTime(d.UpdatedAt)</td>
                         </tr>

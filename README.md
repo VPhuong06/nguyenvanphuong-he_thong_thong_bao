@@ -78,7 +78,7 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 
 Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbitmq`, `campaign-api`).
 
-Schema DB được tạo tự động khi Campaign API khởi động lần đầu. Nếu model dữ liệu thay đổi sau khi DB đã được tạo, xoá volume để tạo lại: `docker compose down -v`.
+Schema DB được tạo tự động khi Campaign API khởi động lần đầu. Nếu model dữ liệu hoặc tham số queue RabbitMQ thay đổi sau khi đã chạy (ví dụ khi cập nhật lên phiên bản có retry tự động), xoá volume để tạo lại: `docker compose down -v`.
 
 ## API
 
@@ -133,10 +133,26 @@ Khi Campaign API tạm dừng, trang hiển thị thông báo "Không kết nố
 3. **Worker** nhận job (ack thủ công, prefetch), **claim** job bằng UPDATE có điều kiện `Pending → Processing` để không gửi trùng khi message bị giao lại, gửi qua bộ gửi giả lập, ghi `Sent`/`Failed` và lịch sử `delivery_attempts`, sau đó mới ack.
 4. Khi không còn job `Pending`/`Processing`, chiến dịch chuyển sang `Completed` hoặc `CompletedWithFailures`.
 
-Chạy lại job thất bại:
+Tự động thử lại và dead-letter queue (DLQ):
+
+```
+                       lỗi tạm thời (lần 1, 2, 3)
+Worker ──publish──► notify.retry ──► notify.retry.10s / .30s / .60s  (TTL)
+                                              │ hết TTL: RabbitMQ dead-letter
+                                              ▼
+                                     notify.exchange ──► notify.jobs ──► Worker
+Worker ──reject──► notify.jobs ──(x-dead-letter-exchange)──► notify.dlx ──► notify.dlq
+           lỗi vĩnh viễn, hết lượt thử lại, hoặc message hỏng
+```
 
 - Worker phân loại lỗi: **Transient** (lỗi tạm thời, chạy lại có thể thành công) hoặc **Permanent** (địa chỉ bị từ chối, chạy lại vẫn hỏng).
-- `POST /campaigns/{id}/retry-failed` đưa các job `Failed` về `Pending`, xoá `PublishedAt` để outbox publish lại, và chuyển chiến dịch về `Running`. Mặc định bỏ qua lỗi Permanent và job đã thử từ 5 lần trở lên; response cho biết số job được chạy lại và số job bị bỏ qua.
+- Lỗi tạm thời: job về `Pending` (kèm `NextRetryAt`), worker đẩy message vào retry queue rồi mới ack message gốc. Retry queue có TTL tăng dần **10s → 30s → 60s**; hết TTL, RabbitMQ tự đưa message về `notify.jobs`. Tối đa 3 lần tự thử lại (4 lần gửi) mỗi lượt.
+- Lỗi vĩnh viễn hoặc hết lượt: job thành `Failed`, worker **reject** message và RabbitMQ chuyển nó vào `notify.dlq` (kèm header `x-death`). Message không đọc được cũng vào DLQ.
+- DB vẫn là nguồn sự thật; DLQ dùng để kiểm tra và theo dõi trên RabbitMQ Management.
+
+Chạy lại thủ công:
+
+- `POST /campaigns/{id}/retry-failed` đưa các job `Failed` về `Pending`, xoá `PublishedAt` để outbox publish lại, đặt lại số lần tự thử lại cho lượt mới và chuyển chiến dịch về `Running`. Mặc định bỏ qua lỗi Permanent và job đã thử từ 12 lần trở lên (khoảng 3 lượt); response cho biết số job được chạy lại và số job bị bỏ qua.
 - `POST /deliveries/{id}/retry` chạy lại một job cụ thể, không giới hạn loại lỗi hay số lần thử.
 - Lịch sử mọi lần gửi được giữ trong `delivery_attempts`, xem qua `GET /deliveries/{id}`.
 
@@ -148,7 +164,11 @@ Khả năng phục hồi:
 | RabbitMQ | API vẫn tạo và start chiến dịch; outbox publish bù khi broker chạy lại; worker tự kết nối lại |
 | PostgreSQL | Campaign API trả **503** "Cơ sở dữ liệu tạm thời không khả dụng"; worker trả job về queue sau 5 giây thay vì ack, xử lý lại khi DB chạy lại |
 
-Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `MockSender__FailureRate`; địa chỉ chứa `fail` (ví dụ `fail01@example.com`) luôn thất bại để demo.
+Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `MockSender__FailureRate`; địa chỉ chứa `fail` (ví dụ `fail01@example.com`) luôn thất bại để demo. Muốn thấy rõ retry tự động, chạy với tỉ lệ lỗi cao:
+
+```bash
+MOCK_FAILURE_RATE=0.5 docker compose up -d --scale notification-worker=3
+```
 
 ## Tiến độ
 
@@ -159,3 +179,4 @@ Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `Mock
 - [x] Tra cứu kết quả gửi chi tiết
 - [x] Chạy lại job thất bại
 - [x] Giao diện Admin Web
+- [x] Mở rộng: tự động thử lại có backoff và dead-letter queue
