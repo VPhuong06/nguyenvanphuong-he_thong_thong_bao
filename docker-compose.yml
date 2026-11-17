@@ -54,6 +54,7 @@ services:
     environment:
       <<: [*db-env, *rabbitmq-env]
       ASPNETCORE_ENVIRONMENT: Production
+      Logging__Format: ${LOG_FORMAT:-text}
     ports:
       - "${API_PORT:-5000}:8080"
     depends_on:
@@ -61,6 +62,13 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    # Image ASP.NET không có curl: gọi /health/ready bằng bash qua /dev/tcp
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
     networks: [notify-net]
 
@@ -74,6 +82,7 @@ services:
       RabbitMq__ConsumerConcurrency: ${WORKER_CONCURRENCY:-1}
       MockSender__FailureRate: ${MOCK_FAILURE_RATE:-0.1}
       DOTNET_ENVIRONMENT: Production
+      Logging__Format: ${LOG_FORMAT:-text}
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,10 +100,17 @@ services:
     environment:
       CampaignApi__BaseUrl: http://campaign-api:8080
       ASPNETCORE_ENVIRONMENT: Production
+      Logging__Format: ${LOG_FORMAT:-text}
     ports:
       - "${ADMIN_PORT:-5001}:8080"
     depends_on:
       - campaign-api
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
     networks: [notify-net]
 

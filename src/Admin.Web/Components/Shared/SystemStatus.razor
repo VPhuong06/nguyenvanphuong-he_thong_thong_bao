@@ -1,0 +1,71 @@
+@* Trạng thái hệ thống trên thanh tiêu đề, lấy từ /health/ready của Campaign API mỗi 5 giây *@
+@implements IDisposable
+@inject CampaignApiClient Api
+
+<span class="sys-status @Css" title="@Tooltip"><i class="dot"></i>@Text</span>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private SystemHealth? _health;
+    private bool _loaded;
+
+    private string Css => !_loaded ? "" : _health is null ? "sys-down" : _health.IsHealthy ? "sys-ok" : "sys-warn";
+
+    private string Text => !_loaded ? "Đang kiểm tra…"
+        : _health is null ? "Mất kết nối Campaign API"
+        : _health.IsHealthy ? "Hệ thống hoạt động"
+        : "Lỗi: " + string.Join(", ", _health.Checks.Where(c => c.Status != "Healthy").Select(c => DisplayName(c.Name)));
+
+    private string Tooltip => _health is null
+        ? "Admin Web không gọi được Campaign API"
+        : string.Join("\n", _health.Checks.Select(c => $"{DisplayName(c.Name)}: {c.Description} ({c.DurationMs} ms)"));
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+            _ = AutoRefreshAsync();
+    }
+
+    private async Task AutoRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                await LoadAsync();
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _health = await Api.GetHealthAsync(_cts.Token);
+            _loaded = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static string DisplayName(string check) => check switch
+    {
+        "postgres" => "PostgreSQL",
+        "rabbitmq" => "RabbitMQ",
+        _ => check
+    };
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

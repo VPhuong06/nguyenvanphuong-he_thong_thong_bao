@@ -1,4 +1,5 @@
 using Notification.Shared.Data;
+using Notification.Shared.Logging;
 using Notification.Shared.Messaging;
 using Notification.Worker;
 using Notification.Worker.Processing;
@@ -7,7 +8,7 @@ using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-builder.Services.AddSerilog(lc => lc.ReadFrom.Configuration(builder.Configuration));
+builder.Services.AddSerilog(lc => lc.ConfigureNotificationLogging(builder.Configuration, "worker"));
 
 var connectionString = builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException("Thiếu cấu hình ConnectionStrings:Default");

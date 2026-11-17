@@ -75,8 +75,33 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 | `RabbitMq__ConsumerConcurrency` | Số job mỗi worker xử lý song song |
 | `MockSender__FailureRate` | Tỉ lệ lỗi ngẫu nhiên của bộ gửi giả lập (0–1) |
 | `CampaignApi__BaseUrl` | URL Campaign API mà Admin Web gọi tới |
+| `Logging__Format` | `text` (mặc định) hoặc `json`; trong compose đặt qua `LOG_FORMAT` |
 
 Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbitmq`, `campaign-api`).
+
+## Theo dõi hệ thống
+
+**Health check**
+
+| Endpoint | Ý nghĩa |
+|---|---|
+| `GET /health` (Campaign API, Admin Web) | Process còn chạy |
+| `GET /health/ready` (Campaign API) | Kết nối được PostgreSQL và RabbitMQ; trả 503 kèm chi tiết thành phần lỗi |
+
+`docker compose ps` hiển thị `healthy`/`unhealthy` cho Campaign API và Admin Web. Admin Web hiện trạng thái hệ thống (lấy từ `/health/ready`) trên thanh tiêu đề, ví dụ "Lỗi: RabbitMQ" khi broker dừng.
+
+**Correlation ID và log có cấu trúc**
+
+- Mỗi request từ Admin Web gửi header `X-Correlation-Id`; Campaign API nhận (hoặc tự sinh), gắn vào mọi dòng log của request và trả lại trong response.
+- Luồng bất đồng bộ dùng **CampaignId** làm correlation ID: API đặt vào thuộc tính `CorrelationId` của message, worker gắn vào log. Lọc log theo một CampaignId là thấy toàn bộ quá trình gửi của chiến dịch qua mọi worker:
+
+```bash
+docker compose logs campaign-api notification-worker | grep <CampaignId>
+```
+
+- Log dùng Serilog. Mặc định dạng text dễ đọc, cuối dòng có `[cid:...]`; `LOG_FORMAT=json` ghi log JSON với từng property (`Service`, `CorrelationId`, `CampaignId`, `DeliveryId`, `TraceId`…) là một trường riêng.
+
+## Ghi chú về dữ liệu
 
 Schema DB được tạo tự động khi Campaign API khởi động lần đầu. Nếu model dữ liệu hoặc tham số queue RabbitMQ thay đổi sau khi đã chạy (ví dụ khi cập nhật lên phiên bản có retry tự động), xoá volume để tạo lại: `docker compose down -v`.
 
@@ -180,3 +205,4 @@ MOCK_FAILURE_RATE=0.5 docker compose up -d --scale notification-worker=3
 - [x] Chạy lại job thất bại
 - [x] Giao diện Admin Web
 - [x] Mở rộng: tự động thử lại có backoff và dead-letter queue
+- [x] Mở rộng: health check, correlation ID, structured logging

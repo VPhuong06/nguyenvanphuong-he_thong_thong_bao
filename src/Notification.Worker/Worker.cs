@@ -1,9 +1,11 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Notification.Shared.Logging;
 using Notification.Shared.Messaging;
 using Notification.Worker.Processing;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using Serilog.Context;
 
 namespace Notification.Worker;
 
@@ -75,11 +77,12 @@ public class Worker(
             return;
         }
 
-        using var _ = logger.BeginScope(new Dictionary<string, object>
-        {
-            ["CampaignId"] = message.CampaignId,
-            ["DeliveryId"] = message.DeliveryId
-        });
+        // Correlation ID của luồng bất đồng bộ là CampaignId (API gửi kèm trong thuộc tính CorrelationId
+        // của message), nên log của mọi worker về cùng một chiến dịch có chung một mã để lần theo
+        var correlationId = ea.BasicProperties.CorrelationId ?? message.CampaignId.ToString();
+        using var _ = LogContext.PushProperty(LoggingSetup.CorrelationIdProperty, correlationId);
+        using var __ = LogContext.PushProperty("CampaignId", message.CampaignId);
+        using var ___ = LogContext.PushProperty("DeliveryId", message.DeliveryId);
 
         try
         {

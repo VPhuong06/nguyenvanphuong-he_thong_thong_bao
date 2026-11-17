@@ -77,4 +77,11 @@ public sealed record CreateCampaignRequest(
 
 public sealed record StartCampaignResult(Guid CampaignId, CampaignStatus Status, int JobCount);
 
+public sealed record HealthCheckItem(string Name, string Status, string? Description, int DurationMs);
+
+public sealed record SystemHealth(string Status, IReadOnlyList<HealthCheckItem> Checks)
+{
+    public bool IsHealthy => Status == "Healthy";
+}
+
 public sealed record RetryFailedResult(Guid CampaignId, int Retried, int SkippedPermanent, int SkippedMaxAttempts);

@@ -50,6 +50,22 @@ public sealed class CampaignApiClient(HttpClient http, ILogger<CampaignApiClient
     public Task<RetryFailedResult> RetryFailedAsync(Guid id, bool includePermanent, CancellationToken ct = default) =>
         PostAsync<RetryFailedResult>($"campaigns/{id}/retry-failed?includePermanent={includePermanent}", null, ct);
 
+    /// <summary>Trạng thái PostgreSQL và RabbitMQ do Campaign API báo; null khi không kết nối được API.</summary>
+    public async Task<SystemHealth?> GetHealthAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            // /health/ready trả 503 khi có thành phần lỗi nhưng vẫn kèm nội dung chi tiết
+            using var response = await http.GetAsync("health/ready", ct);
+            return await response.Content.ReadFromJsonAsync<SystemHealth>(Json, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException ||
+                                   (ex is TaskCanceledException && !ct.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
+
     public async Task RetryDeliveryAsync(Guid id, CancellationToken ct = default) =>
         await SendAsync(() => http.PostAsync($"deliveries/{id}/retry", null, ct), ct);
 
