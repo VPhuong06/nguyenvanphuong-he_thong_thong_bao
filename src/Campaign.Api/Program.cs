@@ -19,11 +19,15 @@ builder.Services.AddSingleton<RabbitMqPublisher>();
 builder.Services.AddSingleton<OutboxSignal>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();
+
 // Enum trao đổi dạng chuỗi ("Email", "Draft") cho dễ đọc
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 var app = builder.Build();
 
+app.UseExceptionHandler();
 app.UseSerilogRequestLogging();
 
 await DatabaseInitializer.EnsureCreatedAsync(app.Services, app.Lifetime.ApplicationStopping);

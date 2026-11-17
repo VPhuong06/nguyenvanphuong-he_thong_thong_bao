@@ -146,7 +146,7 @@ Khả năng phục hồi:
 |---|---|
 | Worker | Job chưa ack được RabbitMQ giao lại cho worker khác; job kẹt ở `Processing` được nhận lại sau khi lease 1 phút hết hạn |
 | RabbitMQ | API vẫn tạo và start chiến dịch; outbox publish bù khi broker chạy lại; worker tự kết nối lại |
-| PostgreSQL | Worker trả job về queue sau 5 giây thay vì ack, xử lý lại khi DB chạy lại |
+| PostgreSQL | Campaign API trả **503** "Cơ sở dữ liệu tạm thời không khả dụng"; worker trả job về queue sau 5 giây thay vì ack, xử lý lại khi DB chạy lại |
 
 Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `MockSender__FailureRate`; địa chỉ chứa `fail` (ví dụ `fail01@example.com`) luôn thất bại để demo.
 

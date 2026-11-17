@@ -6,7 +6,9 @@ COPY src/Admin.Web/Admin.Web.csproj src/Admin.Web/
 RUN dotnet restore src/Admin.Web/Admin.Web.csproj
 COPY src/Notification.Shared/ src/Notification.Shared/
 COPY src/Admin.Web/ src/Admin.Web/
-RUN dotnet publish src/Admin.Web/Admin.Web.csproj -c Release -o /app/publish --no-restore
+# Không dùng --no-restore: SDK chỉ thêm gói chứa _framework/blazor.web.js khi thấy các file .razor,
+# nên phải restore lại sau khi đã copy toàn bộ source
+RUN dotnet publish src/Admin.Web/Admin.Web.csproj -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app

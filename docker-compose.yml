@@ -1,6 +1,8 @@
 # Khởi chạy toàn bộ hệ thống:   docker compose up --build
 # Chạy nhiều worker:            docker compose up --build --scale notification-worker=3
 
+name: notification-system
+
 x-rabbitmq-env: &rabbitmq-env
   RabbitMq__Host: rabbitmq
   RabbitMq__Port: "5672"
@@ -8,7 +10,7 @@ x-rabbitmq-env: &rabbitmq-env
   RabbitMq__Password: ${RABBITMQ_PASSWORD}
 
 x-db-env: &db-env
-  ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+  ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable
 
 services:
   postgres:
