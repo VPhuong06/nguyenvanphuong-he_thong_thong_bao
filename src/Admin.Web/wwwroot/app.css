@@ -165,3 +165,18 @@ textarea.input { resize: vertical; }
 .blazor-error-boundary::after {
     content: "Đã xảy ra lỗi.";
 }
+
+/* Trang thống kê */
+.stat-cards-6 { grid-template-columns: repeat(6, 1fr); }
+.stat-value .unit { font-size: 14px; font-weight: 400; color: var(--muted); }
+.seg-info { background: var(--info); }
+.inline-field { margin-bottom: 0; min-width: 260px; }
+.timeline { display: flex; align-items: stretch; gap: 6px; height: 180px; }
+.tl-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tl-bar { flex: 1; display: flex; flex-direction: column-reverse; background: #f3f5f8; border-radius: 4px; overflow: hidden; }
+.tl-bar .seg { width: 100%; transition: height .4s ease; }
+.tl-label { text-align: center; font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+@media (max-width: 1000px) {
+    .stat-cards-6 { grid-template-columns: repeat(3, 1fr); }
+}

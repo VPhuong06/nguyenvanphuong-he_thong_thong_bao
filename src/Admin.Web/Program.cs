@@ -23,6 +23,15 @@ builder.Services.AddHttpClient<CampaignApiClient>(CampaignApiClient.HttpClientNa
     })
     .AddHttpMessageHandler<CorrelationIdHandler>();
 
+var statisticsBaseUrl = builder.Configuration["StatisticsApi:BaseUrl"]
+    ?? throw new InvalidOperationException("Thiếu cấu hình StatisticsApi:BaseUrl");
+builder.Services.AddHttpClient<StatisticsApiClient>(StatisticsApiClient.HttpClientName, c =>
+    {
+        c.BaseAddress = new Uri(statisticsBaseUrl.TrimEnd('/') + "/");
+        c.Timeout = TimeSpan.FromSeconds(10);
+    })
+    .AddHttpMessageHandler<CorrelationIdHandler>();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())

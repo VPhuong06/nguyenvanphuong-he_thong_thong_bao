@@ -27,7 +27,8 @@ public enum JobOutcome
 }
 
 /// <param name="Retry">Retry queue cần đẩy job vào khi Outcome là RetryScheduled.</param>
-public sealed record JobResult(JobOutcome Outcome, RetryQueue? Retry = null);
+/// <param name="Event">Event kết quả lần gửi để phát cho các subscriber (khi đã thực sự gửi).</param>
+public sealed record JobResult(JobOutcome Outcome, RetryQueue? Retry = null, DeliveryAttemptedEvent? Event = null);
 
 /// <summary>Xử lý một job gửi thông báo. Được tạo trong scope riêng cho mỗi message.</summary>
 public sealed class JobProcessor(
@@ -147,11 +148,17 @@ public sealed class JobProcessor(
             logger.LogWarning("Worker {WorkerId} gửi job {DeliveryId} tới {Address} thất bại ({FailureKind}): {Error}",
                 workerId, message.DeliveryId, job.RecipientAddress, result.FailureKind, result.Error);
 
+        var outcome = result.Succeeded ? DeliveryAttemptOutcome.Sent
+            : retry is not null ? DeliveryAttemptOutcome.RetryScheduled
+            : DeliveryAttemptOutcome.Failed;
+        var attemptedEvent = new DeliveryAttemptedEvent(message.DeliveryId, message.CampaignId, workerId,
+            job.AttemptCount, outcome, result.FailureKind, (int)(finishedAt - startedAt).TotalMilliseconds, finishedAt);
+
         if (retry is not null)
-            return new JobResult(JobOutcome.RetryScheduled, retry);
+            return new JobResult(JobOutcome.RetryScheduled, retry, attemptedEvent);
 
         await TryCompleteCampaignAsync(message.CampaignId, ct);
-        return new JobResult(result.Succeeded ? JobOutcome.Sent : JobOutcome.Failed);
+        return new JobResult(result.Succeeded ? JobOutcome.Sent : JobOutcome.Failed, Event: attemptedEvent);
     }
 
     /// <summary>

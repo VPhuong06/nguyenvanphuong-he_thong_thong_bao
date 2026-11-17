@@ -3,6 +3,7 @@
     <Project Path="src/Admin.Web/Admin.Web.csproj" />
     <Project Path="src/Campaign.Api/Campaign.Api.csproj" />
     <Project Path="src/Notification.Shared/Notification.Shared.csproj" />
+    <Project Path="src/Notification.Statistics/Notification.Statistics.csproj" />
     <Project Path="src/Notification.Worker/Notification.Worker.csproj" />
   </Folder>
 </Solution>

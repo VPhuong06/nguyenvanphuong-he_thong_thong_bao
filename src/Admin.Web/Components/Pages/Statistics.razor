@@ -1,0 +1,205 @@
+@page "/statistics"
+@implements IDisposable
+@inject StatisticsApiClient Stats
+@inject CampaignApiClient Campaigns
+
+<PageTitle>Thống kê</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Thống kê gửi</h1>
+        <div class="muted small">
+            Dữ liệu từ Statistics service, nhận event qua fanout exchange <code>notify.events</code> (Phát hành–đăng ký).
+        </div>
+    </div>
+    <label class="field inline-field">
+        <span>Chiến dịch</span>
+        <select class="input" value="@_campaignId" @onchange="ChangeCampaignAsync">
+            <option value="">Tất cả chiến dịch</option>
+            @foreach (var c in _campaigns)
+            {
+                <option value="@c.Id">@c.Name</option>
+            }
+        </select>
+    </label>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_overview is not null)
+{
+    var o = _overview;
+    <div class="stat-cards stat-cards-6">
+        <div class="stat-card"><div class="stat-label">Tổng lần gửi</div><div class="stat-value">@o.Attempts</div></div>
+        <div class="stat-card stat-sent"><div class="stat-label">Thành công</div><div class="stat-value">@o.Sent</div></div>
+        <div class="stat-card stat-pending"><div class="stat-label">Lỗi tạm thời, tự thử lại</div><div class="stat-value">@o.RetryScheduled</div></div>
+        <div class="stat-card stat-failed"><div class="stat-label">Thất bại cuối cùng</div><div class="stat-value">@o.Failed</div></div>
+        <div class="stat-card"><div class="stat-label">Gửi được nhờ thử lại</div><div class="stat-value">@o.SentAfterRetry</div></div>
+        <div class="stat-card"><div class="stat-label">Thời gian gửi TB</div><div class="stat-value">@o.AvgSendMs <span class="unit">ms</span></div></div>
+    </div>
+    <p class="muted small">
+        @o.Workers worker · @o.Campaigns chiến dịch · @o.LastMinute lần gửi trong 1 phút qua · event gần nhất @Labels.Time(o.LastEventAt)
+    </p>
+
+    <h2>Lần gửi theo phút (15 phút gần nhất)</h2>
+    <div class="card">
+        @if (_timeline.Count > 0)
+        {
+            var max = Math.Max(1, _timeline.Max(p => p.Total));
+            <div class="timeline">
+                @foreach (var p in _timeline)
+                {
+                    <div class="tl-col" title="@Labels.ShortTime(p.Minute): đã gửi @p.Sent · thử lại @p.RetryScheduled · thất bại @p.Failed">
+                        <div class="tl-bar">
+                            <span class="seg seg-sent" style="height:@Height(p.Sent, max)"></span>
+                            <span class="seg seg-pending" style="height:@Height(p.RetryScheduled, max)"></span>
+                            <span class="seg seg-failed" style="height:@Height(p.Failed, max)"></span>
+                        </div>
+                        <div class="tl-label">@p.Minute.ToOffset(TimeSpan.FromHours(7)).ToString("HH:mm")</div>
+                    </div>
+                }
+            </div>
+            <div class="stats-legend">
+                <span><i class="dot dot-sent"></i>Thành công</span>
+                <span><i class="dot dot-pending"></i>Lỗi tạm thời, tự thử lại</span>
+                <span><i class="dot dot-failed"></i>Thất bại cuối cùng</span>
+            </div>
+        }
+    </div>
+
+    <h2>Phân bố theo worker</h2>
+    @if (_workers.Count == 0)
+    {
+        <div class="empty">Chưa có lần gửi nào.</div>
+    }
+    else
+    {
+        var total = Math.Max(1, _workers.Sum(w => w.Attempts));
+        <div class="card table-card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Worker</th>
+                        <th class="num">Lần gửi</th>
+                        <th class="col-progress">Tỉ trọng</th>
+                        <th class="num">Thành công</th>
+                        <th class="num">Tự thử lại</th>
+                        <th class="num">Thất bại</th>
+                        <th class="num">TB (ms)</th>
+                        <th>Hoạt động gần nhất</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var w in _workers)
+                    {
+                        var share = w.Attempts * 100.0 / total;
+                        <tr>
+                            <td class="mono">@w.WorkerId</td>
+                            <td class="num">@w.Attempts</td>
+                            <td>
+                                <div class="stats-bar"><span class="seg seg-info" style="width:@Percent(share)"></span></div>
+                                <div class="small muted">@share.ToString("0.0")%</div>
+                            </td>
+                            <td class="num">@w.Sent</td>
+                            <td class="num">@w.RetryScheduled</td>
+                            <td class="num">@w.Failed</td>
+                            <td class="num">@w.AvgMs</td>
+                            <td class="nowrap small">@Labels.Time(w.LastSeenAt)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+else if (_error is null)
+{
+    <p class="muted">Đang tải…</p>
+}
+
+@code {
+    private const int TimelineMinutes = 15;
+
+    private readonly CancellationTokenSource _cts = new();
+    private IReadOnlyList<CampaignSummary> _campaigns = [];
+    private Guid? _campaignId;
+
+    private StatsOverview? _overview;
+    private IReadOnlyList<WorkerStats> _workers = [];
+    private IReadOnlyList<StatsTimelinePoint> _timeline = [];
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _campaigns = (await Campaigns.ListCampaignsAsync(null, 1, 100, _cts.Token)).Items;
+        }
+        catch (ApiException)
+        {
+            // Bộ lọc chiến dịch chỉ là tiện ích; thống kê vẫn hiển thị được khi Campaign API dừng
+        }
+        await LoadAsync();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+            _ = AutoRefreshAsync();
+    }
+
+    private async Task AutoRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                await LoadAsync();
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _overview = await Stats.GetOverviewAsync(_campaignId, _cts.Token);
+            _workers = await Stats.GetWorkersAsync(_campaignId, _cts.Token);
+            _timeline = await Stats.GetTimelineAsync(TimelineMinutes, _campaignId, _cts.Token);
+            _error = null;
+        }
+        catch (ApiException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task ChangeCampaignAsync(ChangeEventArgs e)
+    {
+        _campaignId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        await LoadAsync();
+    }
+
+    private static string Height(int value, int max) =>
+        FormattableString.Invariant($"{value * 100.0 / max:0.##}%");
+
+    private static string Percent(double value) =>
+        FormattableString.Invariant($"{value:0.##}%");
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

@@ -90,6 +90,9 @@ public class Worker(
             var processor = scope.ServiceProvider.GetRequiredService<JobProcessor>();
             var result = await processor.ProcessAsync(message, _workerId, ct);
 
+            if (result.Event is not null)
+                await PublishEventAsync(result.Event, ct);
+
             switch (result.Outcome)
             {
                 case JobOutcome.HeldByOtherWorker:
@@ -154,6 +157,39 @@ public class Worker(
         {
             await _publishChannel!.BasicPublishAsync(RabbitMqTopology.RetryExchange, retry.RoutingKey,
                 mandatory: true, basicProperties: props, body: body, cancellationToken: ct);
+        }
+        finally
+        {
+            _publishLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Phát event kết quả lên fanout exchange cho các subscriber (service thống kê…). Kết quả gửi đã nằm
+    /// trong DB, nên event lỗi chỉ được ghi log, không làm ảnh hưởng luồng gửi chính.
+    /// </summary>
+    private async Task PublishEventAsync(DeliveryAttemptedEvent attemptedEvent, CancellationToken ct)
+    {
+        var props = new BasicProperties
+        {
+            Persistent = true,
+            ContentType = "application/json",
+            Type = nameof(DeliveryAttemptedEvent),
+            MessageId = $"{attemptedEvent.DeliveryId}:{attemptedEvent.AttemptNo}",
+            CorrelationId = attemptedEvent.CampaignId.ToString()
+        };
+        var body = JsonSerializer.SerializeToUtf8Bytes(attemptedEvent, DeliveryAttemptedEvent.Json);
+
+        await _publishLock.WaitAsync(ct);
+        try
+        {
+            await _publishChannel!.BasicPublishAsync(RabbitMqTopology.EventsExchange, routingKey: "",
+                mandatory: false, basicProperties: props, body: body, cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Không phát được event kết quả của job {DeliveryId}: {Error}",
+                attemptedEvent.DeliveryId, ex.Message);
         }
         finally
         {

@@ -23,6 +23,12 @@ public static class RabbitMqTopology
     public const string DeadLetterExchange = "notify.dlx";
     public const string DeadLetterQueue = "notify.dlq";
 
+    /// <summary>
+    /// Fanout exchange cho event kết quả gửi (Publish–subscribe). Mỗi subscriber tự khai báo queue
+    /// riêng và bind vào exchange này.
+    /// </summary>
+    public const string EventsExchange = "notify.events";
+
     /// <summary>Các mức chờ tăng dần giữa những lần tự thử lại.</summary>
     public static readonly IReadOnlyList<RetryQueue> RetryQueues =
     [
@@ -62,6 +68,9 @@ public static class RabbitMqTopology
                 cancellationToken: ct);
             await channel.QueueBindAsync(retry.Queue, RetryExchange, retry.RoutingKey, cancellationToken: ct);
         }
+
+        await channel.ExchangeDeclareAsync(EventsExchange, ExchangeType.Fanout, durable: true, autoDelete: false,
+            cancellationToken: ct);
     }
 }
 

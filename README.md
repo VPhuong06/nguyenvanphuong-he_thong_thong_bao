@@ -7,14 +7,19 @@ Hệ thống cho phép tạo chiến dịch thông báo tới nhiều người n
 ## Kiến trúc
 
 ```
-Admin Web ──REST──► Campaign API ──publish──► RabbitMQ ──consume──► Notification Worker (1..N)
-                         │                                                  │
-                         └──────────────────► PostgreSQL ◄──────────────────┘
+            ┌──REST──► Campaign API ──job──► [notify.exchange] ──► notify.jobs ──► Notification Worker (1..N)
+Admin Web ──┤              │                                                         │      │
+            │              └──────────────► PostgreSQL (notification_db) ◄───────────┘      │ event
+            │                                                                               ▼
+            └──REST──► Statistics ◄── stats.delivery-events ◄── [notify.events] (fanout) ◄──┘
+                           │
+                           └──► PostgreSQL (statistics_db)
 ```
 
-- **Mẫu trao đổi thông điệp (MEP):** Qua hàng đợi (Queue-based). Một direct exchange `notify.exchange` và một queue chung `notify.jobs`; các worker là competing consumers nên mỗi job chỉ do một worker xử lý.
-- Admin Web giao tiếp với hệ thống qua REST (Request–response).
-- PostgreSQL là nguồn sự thật về trạng thái chiến dịch và từng job gửi.
+- **MEP chính – Qua hàng đợi (Queue-based):** direct exchange `notify.exchange` và một queue chung `notify.jobs`; các worker là competing consumers nên mỗi job chỉ do một worker xử lý.
+- **MEP phụ – Phát hành–đăng ký (Publish–subscribe):** sau mỗi lần gửi, worker phát event lên fanout exchange `notify.events`; mỗi subscriber (hiện là service thống kê) có queue riêng và nhận bản sao của mọi event.
+- Admin Web giao tiếp với Campaign API và Statistics qua REST (Request–response).
+- `notification_db` là nguồn sự thật về chiến dịch và job gửi; service thống kê có database riêng `statistics_db`, chỉ biết về hệ thống qua event.
 
 ## Cấu trúc thư mục
 
@@ -22,7 +27,8 @@ Admin Web ──REST──► Campaign API ──publish──► RabbitMQ ─�
 |---|---|
 | `src/Campaign.Api` | ASP.NET Core Minimal API: tạo, xem, start chiến dịch, tra cứu kết quả |
 | `src/Notification.Worker` | .NET Worker Service: nhận job từ RabbitMQ, gửi thông báo, ghi kết quả |
-| `src/Admin.Web` | Blazor Web App: giao diện quản trị chiến dịch |
+| `src/Notification.Statistics` | Minimal API + subscriber: nhận event kết quả gửi, cung cấp số liệu thống kê |
+| `src/Admin.Web` | Blazor Web App: giao diện quản trị chiến dịch và thống kê |
 | `src/Notification.Shared` | Entity, `NotificationDbContext`, message contract, topology RabbitMQ |
 | `docker-compose.yml` | Khởi chạy toàn bộ hệ thống |
 
@@ -48,6 +54,7 @@ docker compose up --build --scale notification-worker=3
 |---|---|
 | Campaign API | http://localhost:5000 |
 | Admin Web | http://localhost:5001 |
+| Statistics | http://localhost:5002 |
 | RabbitMQ Management | http://localhost:15672 (tài khoản trong `.env`) |
 | PostgreSQL | localhost:5432 |
 
@@ -59,6 +66,7 @@ Chỉ chạy hạ tầng bằng Docker, còn các service chạy bằng `dotnet 
 docker compose up -d postgres rabbitmq
 dotnet run --project src/Campaign.Api
 dotnet run --project src/Notification.Worker
+dotnet run --project src/Notification.Statistics
 dotnet run --project src/Admin.Web
 ```
 
@@ -75,6 +83,8 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 | `RabbitMq__ConsumerConcurrency` | Số job mỗi worker xử lý song song |
 | `MockSender__FailureRate` | Tỉ lệ lỗi ngẫu nhiên của bộ gửi giả lập (0–1) |
 | `CampaignApi__BaseUrl` | URL Campaign API mà Admin Web gọi tới |
+| `ConnectionStrings__Statistics` | Chuỗi kết nối database riêng của service thống kê |
+| `StatisticsApi__BaseUrl` | URL service thống kê mà Admin Web gọi tới |
 | `Logging__Format` | `text` (mặc định) hoặc `json`; trong compose đặt qua `LOG_FORMAT` |
 
 Trong Docker, các container gọi nhau bằng tên service (`postgres`, `rabbitmq`, `campaign-api`).
@@ -141,15 +151,29 @@ Content-Type: application/json
 
 ## Admin Web
 
-Giao diện quản trị (Blazor Server) chỉ giao tiếp với hệ thống qua REST tới Campaign API:
+Giao diện quản trị (Blazor Server) chỉ giao tiếp với hệ thống qua REST tới Campaign API và Statistics:
 
 | Trang | Chức năng |
 |---|---|
 | `/` | Danh sách chiến dịch, lọc theo trạng thái, thanh tiến độ Sent/Failed/Pending; tự cập nhật mỗi 3 giây |
 | `/campaigns/new` | Tạo chiến dịch: chọn người nhận từ danh bạ và/hoặc nhập tay (`Tên <địa chỉ>`, `Tên, địa chỉ` hoặc `địa chỉ`); lưu nháp hoặc tạo và gửi ngay |
 | `/campaigns/{id}` | Số liệu Pending/Sent/Failed, start chiến dịch, chạy lại job lỗi, bảng kết quả gửi lọc theo trạng thái (kèm worker đã xử lý), bấm vào từng job để xem lịch sử các lần gửi và chạy lại riêng job đó; tự cập nhật mỗi 2 giây khi đang gửi |
+| `/statistics` | Số liệu từ service thống kê: tổng lần gửi, thành công, tự thử lại, thất bại, gửi được nhờ thử lại, thời gian gửi trung bình; biểu đồ lần gửi theo phút; phân bố theo worker; lọc theo chiến dịch |
 
-Khi Campaign API tạm dừng, trang hiển thị thông báo "Không kết nối được Campaign API" thay vì lỗi, và tự hoạt động lại khi API chạy lại.
+Khi Campaign API hoặc Statistics tạm dừng, trang hiển thị thông báo thay vì lỗi, và tự hoạt động lại khi service chạy lại.
+
+## Service thống kê (Publish–subscribe)
+
+- Sau mỗi lần gửi, worker phát `DeliveryAttemptedEvent` (job, chiến dịch, worker, lần thử, kết quả `Sent`/`RetryScheduled`/`Failed`, thời gian gửi) lên fanout exchange `notify.events`. Event được phát sau khi kết quả đã ghi vào DB; phát lỗi chỉ ghi log, không ảnh hưởng luồng gửi.
+- Service thống kê khai báo queue riêng `stats.delivery-events`, bind vào exchange và ghi event vào `statistics_db`. Event trùng (at-least-once) bị bỏ qua nhờ khoá duy nhất (DeliveryId, AttemptNo).
+- Muốn thêm subscriber khác (audit, gửi báo cáo…), chỉ cần tạo queue mới bind vào `notify.events`: mỗi subscriber nhận đủ mọi event, worker không phải sửa.
+- Service thống kê dừng thì việc gửi vẫn chạy bình thường; event nằm chờ trong queue riêng và được xử lý bù khi service chạy lại.
+
+| Method | Path | Mô tả |
+|---|---|---|
+| GET | `/stats/overview?campaignId=` | Tổng quan các lần gửi |
+| GET | `/stats/workers?campaignId=` | Số lần gửi theo từng worker |
+| GET | `/stats/timeline?minutes=15&campaignId=` | Số lần gửi theo phút |
 
 ## Luồng xử lý một chiến dịch
 
@@ -206,3 +230,4 @@ MOCK_FAILURE_RATE=0.5 docker compose up -d --scale notification-worker=3
 - [x] Giao diện Admin Web
 - [x] Mở rộng: tự động thử lại có backoff và dead-letter queue
 - [x] Mở rộng: health check, correlation ID, structured logging
+- [x] Mở rộng: service thống kê nhận event qua Publish–subscribe
