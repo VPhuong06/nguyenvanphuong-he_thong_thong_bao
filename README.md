@@ -82,6 +82,8 @@ Cấu hình phụ thuộc môi trường được đọc từ biến môi trư�
 | `RabbitMq__PrefetchCount` | Số job tối đa mỗi worker giữ chưa ack |
 | `RabbitMq__ConsumerConcurrency` | Số job mỗi worker xử lý song song |
 | `MockSender__FailureRate` | Tỉ lệ lỗi ngẫu nhiên của bộ gửi giả lập (0–1) |
+| `Sender__Mode` | `Mock` hoặc `Smtp` (trong compose đặt qua `SENDER_MODE`) |
+| `Smtp__Host`, `Smtp__Port`, `Smtp__UserName`, `Smtp__Password`, `Smtp__FromAddress`, `Smtp__FromName` | Máy chủ và tài khoản SMTP khi gửi email thật |
 | `CampaignApi__BaseUrl` | URL Campaign API mà Admin Web gọi tới |
 | `ConnectionStrings__Statistics` | Chuỗi kết nối database riêng của service thống kê |
 | `StatisticsApi__BaseUrl` | URL service thống kê mà Admin Web gọi tới |
@@ -218,6 +220,35 @@ Bộ gửi giả lập: độ trễ 200–800 ms, lỗi ngẫu nhiên theo `Mock
 ```bash
 MOCK_FAILURE_RATE=0.5 docker compose up -d --scale notification-worker=3
 ```
+
+## Gửi email thật
+
+Worker có hai bộ gửi, chọn bằng `SENDER_MODE` trong `.env`:
+
+| `SENDER_MODE` | Hành vi |
+|---|---|
+| `Mock` (mặc định) | Giả lập, không gửi thật |
+| `Smtp` | Kênh Email gửi thật qua SMTP (MailKit); kênh SMS vẫn giả lập vì gửi SMS thật cần nhà cung cấp trả phí |
+
+**Thử an toàn với Mailpit** (máy chủ SMTP giả, email chỉ hiện trong hộp thư web, không tới người nhận thật). Trong `.env` đặt `SENDER_MODE=Smtp`, `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, `SMTP_FROM=noreply@example.com`, để trống `SMTP_USER`/`SMTP_PASSWORD`, rồi:
+
+```bash
+docker compose --profile mailtest up -d --scale notification-worker=3
+```
+
+Xem email đã gửi tại http://localhost:8025.
+
+**Gửi thật qua Gmail:**
+
+1. Bật xác minh 2 bước cho tài khoản Gmail, tạo **App Password** tại https://myaccount.google.com/apppasswords.
+2. Trong `.env` (không đưa lên Git): `SENDER_MODE=Smtp`, `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USER=<địa chỉ Gmail>`, `SMTP_PASSWORD=<App Password>`, `SMTP_FROM=<địa chỉ Gmail>`.
+3. Khởi động lại worker: `docker compose up -d --scale notification-worker=3`. Log worker ghi "Chế độ gửi: email thật qua SMTP smtp.gmail.com:587".
+
+Lưu ý:
+
+- Chỉ gửi tới địa chỉ của người đã đồng ý nhận (bản thân, bạn cùng nhóm). Gmail giới hạn khoảng 500 email/ngày; gửi hàng loạt tới người lạ dễ bị khoá tài khoản hoặc vào thư rác.
+- Địa chỉ mẫu trong danh bạ (`@example.com`) không có thật: khi gửi thật hãy nhập trực tiếp địa chỉ thật ở trang tạo chiến dịch.
+- Lỗi SMTP được phân loại: máy chủ từ chối người nhận hoặc nội dung (mã 5xx) là lỗi vĩnh viễn; mất kết nối, hết thời gian chờ, đăng nhập lỗi là lỗi tạm thời và được tự thử lại. Email bị trả lại (bounce) sau khi máy chủ đã nhận thì hệ thống không theo dõi được.
 
 ## Tiến độ
 

@@ -3,7 +3,7 @@ using Notification.Shared.Domain;
 
 namespace Notification.Worker.Sending;
 
-public sealed record SendRequest(NotificationChannel Channel, string Address, string Subject, string Body);
+public sealed record SendRequest(NotificationChannel Channel, string Name, string Address, string Subject, string Body);
 
 public sealed record SendResult(bool Succeeded, string? Error, FailureKind? FailureKind)
 {

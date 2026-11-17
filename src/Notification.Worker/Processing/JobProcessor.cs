@@ -90,6 +90,7 @@ public sealed class JobProcessor(
 
         var result = await sender.SendAsync(new SendRequest(
             job.Channel,
+            job.RecipientName,
             job.RecipientAddress,
             Render(job.Subject, job.RecipientName, job.RecipientAddress),
             Render(job.Content, job.RecipientName, job.RecipientAddress)), ct);
