@@ -103,20 +103,21 @@ public sealed class CampaignApiClient(HttpClient http, ILogger<CampaignApiClient
         if (response.IsSuccessStatusCode)
             return response;
 
-        var problem = await TryReadProblemAsync(response, ct);
-        var message = response.StatusCode switch
+        // Nhánh lỗi đọc ApiError (Code + Message); lỗi do framework chặn (404 sai route, 415…) có thể không có body
+        var error = await TryReadErrorAsync(response, ct);
+        var message = error?.Message ?? response.StatusCode switch
         {
             HttpStatusCode.NotFound => "Không tìm thấy dữ liệu.",
-            _ => problem?.Detail ?? problem?.Title ?? $"Campaign API trả lỗi {(int)response.StatusCode}."
+            _ => $"Campaign API trả lỗi {(int)response.StatusCode}."
         };
-        throw new ApiException(message, problem?.Errors);
+        throw new ApiException(message, error?.Errors);
     }
 
-    private static async Task<ProblemResponse?> TryReadProblemAsync(HttpResponseMessage response, CancellationToken ct)
+    private static async Task<ApiErrorResponse?> TryReadErrorAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try
         {
-            return await response.Content.ReadFromJsonAsync<ProblemResponse>(Json, ct);
+            return await response.Content.ReadFromJsonAsync<ApiErrorResponse>(Json, ct);
         }
         catch (Exception)
         {
@@ -124,5 +125,5 @@ public sealed class CampaignApiClient(HttpClient http, ILogger<CampaignApiClient
         }
     }
 
-    private sealed record ProblemResponse(string? Title, string? Detail, Dictionary<string, string[]>? Errors);
+    private sealed record ApiErrorResponse(string? Code, string? Message, Dictionary<string, string[]>? Errors);
 }

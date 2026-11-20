@@ -1,16 +1,14 @@
 using System.Net.Sockets;
+using Campaign.Api.Contracts;
 using Microsoft.AspNetCore.Diagnostics;
 using Npgsql;
 
 namespace Campaign.Api.Infrastructure;
 
 /// <summary>
-/// Khi PostgreSQL tạm dừng, trả 503 kèm thông báo rõ ràng thay vì lỗi 500, để client biết
-/// có thể thử lại sau.
+/// Khi PostgreSQL tạm dừng, trả 503 kèm ApiError thay vì lỗi 500, để client biết có thể thử lại sau.
 /// </summary>
-public sealed class DatabaseUnavailableHandler(
-    IProblemDetailsService problemDetails,
-    ILogger<DatabaseUnavailableHandler> logger) : IExceptionHandler
+public sealed class DatabaseUnavailableHandler(ILogger<DatabaseUnavailableHandler> logger) : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(HttpContext context, Exception exception, CancellationToken ct)
     {
@@ -21,17 +19,9 @@ public sealed class DatabaseUnavailableHandler(
             context.Request.Method, context.Request.Path, exception.Message);
 
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-        return await problemDetails.TryWriteAsync(new ProblemDetailsContext
-        {
-            HttpContext = context,
-            Exception = exception,
-            ProblemDetails =
-            {
-                Status = StatusCodes.Status503ServiceUnavailable,
-                Title = "Cơ sở dữ liệu tạm thời không khả dụng",
-                Detail = "Vui lòng thử lại sau ít phút."
-            }
-        });
+        await context.Response.WriteAsJsonAsync(new ApiError("DATABASE_UNAVAILABLE",
+            "Cơ sở dữ liệu tạm thời không khả dụng, vui lòng thử lại sau ít phút."), ct);
+        return true;
     }
 
     private static bool IsDatabaseUnavailable(Exception exception)

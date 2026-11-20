@@ -153,6 +153,45 @@ Content-Type: application/json
 - Người nhận trùng địa chỉ được tự loại bỏ.
 - Chiến dịch mới ở trạng thái `Draft`; `GET /campaigns?status=Draft&page=1&pageSize=20` hỗ trợ lọc và phân trang.
 
+## Phản hồi lỗi và kiểm thử API
+
+Mọi lỗi do Campaign API trả về có cùng cấu trúc `ApiError` để máy khách xử lý nhất quán (Error DTO, Chương 2):
+
+```json
+{ "code": "INVALID_CAMPAIGN", "message": "Dữ liệu không hợp lệ.", "errors": { "name": ["Tên chiến dịch bắt buộc, tối đa 200 ký tự."] } }
+```
+
+| Mã HTTP | `code` | Khi nào |
+|---|---|---|
+| 400 | `INVALID_CAMPAIGN` | Dữ liệu tạo chiến dịch không hợp lệ (kèm `errors` từng trường) |
+| 400 | `INVALID_QUERY` | Tham số lọc/phân trang không hợp lệ |
+| 404 | `CAMPAIGN_NOT_FOUND`, `DELIVERY_NOT_FOUND` | Id đúng định dạng nhưng không tồn tại |
+| 409 | `CAMPAIGN_NOT_DRAFT` | Start chiến dịch không ở trạng thái Draft |
+| 409 | `CAMPAIGN_NOT_STARTED` | Chạy lại job khi chiến dịch chưa start |
+| 409 | `DELIVERY_NOT_FAILED` | Chạy lại một job không ở trạng thái Failed |
+| 503 | `DATABASE_UNAVAILABLE` | PostgreSQL tạm dừng |
+
+File [`requests.http`](requests.http) (extension REST Client của VS Code) chứa đủ các ca thành công và lỗi.
+
+Bảng phá thử (chạy thật trên Docker Compose):
+
+| # | Thao tác | Mong đợi | Thực tế | Giải thích |
+|---|---|---|---|---|
+| 1 | `POST /campaigns` hợp lệ | 201 + `Location` | 201, `Location: /campaigns/{id}` | Tạo tài nguyên mới, `Location` chỉ URI đọc lại |
+| 2 | `POST /campaigns/{id}/start` | 202 | 202 `{ status: Running, jobCount }` | Tác vụ dài: API nhận việc rồi giao cho worker qua hàng đợi |
+| 3 | Start lần hai | 409 | 409 `CAMPAIGN_NOT_DRAFT` | UPDATE có điều kiện `Status = Draft` chặn start trùng |
+| 4 | Chạy lại job khi chiến dịch còn Draft | 409 | 409 `CAMPAIGN_NOT_STARTED` | Đúng cú pháp nhưng sai trạng thái nghiệp vụ |
+| 5 | POST thiếu tên, tiêu đề, nội dung, người nhận | 400 | 400 `INVALID_CAMPAIGN` + `errors` | Validation tại biên hệ thống |
+| 6 | `GET /campaigns?status=XYZ` | 400 | 400 `INVALID_QUERY` | Tham số lọc nằm trong query string, vẫn phải kiểm tra |
+| 7 | `GET /campaigns/{guid không tồn tại}` | 404 + ApiError | 404 `CAMPAIGN_NOT_FOUND` | Handler chạy, không tìm thấy tài nguyên |
+| 8 | `GET /campaigns/abc` | 404 rỗng | 404, body rỗng | Không khớp ràng buộc `{id:guid}`, framework trả 404 trước handler |
+| 9 | Body JSON hỏng | 400 | 400, body rỗng | Framework không đọc được body |
+| 10 | Thiếu `Content-Type` | 415 | 415 | Framework không biết body là JSON |
+| 11 | `PUT /campaigns/{id}` | 405 | 405, `Allow: GET` | URI tồn tại nhưng không hỗ trợ phương thức |
+| 12 | `GET /deliveries/{guid không tồn tại}` | 404 + ApiError | 404 `DELIVERY_NOT_FOUND` | |
+| 13 | Tắt PostgreSQL rồi gọi API | 503 | 503 `DATABASE_UNAVAILABLE` | Lỗi hạ tầng tạm thời, client có thể thử lại sau |
+| 14 | Chạy lại một job đã Failed | 202 | 202 | Job về Pending, outbox publish lại |
+
 ## Admin Web
 
 Giao diện quản trị (Blazor Server) chỉ giao tiếp với hệ thống qua REST tới Campaign API và Statistics:

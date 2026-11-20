@@ -92,7 +92,7 @@ public static class CampaignEndpoints
             errors["recipients"] = ["Chiến dịch cần ít nhất một người nhận."];
 
         if (errors.Count > 0)
-            return Results.ValidationProblem(errors);
+            return ApiErrors.Invalid("INVALID_CAMPAIGN", errors);
 
         var campaign = new CampaignEntity
         {
@@ -139,7 +139,7 @@ public static class CampaignEndpoints
         }
 
         if (errors.Count > 0)
-            return Results.ValidationProblem(errors);
+            return ApiErrors.Invalid("INVALID_QUERY", errors);
 
         var query = db.Campaigns.AsNoTracking();
         if (statusFilter is { } s)
@@ -163,7 +163,9 @@ public static class CampaignEndpoints
             .Select(ToDetail)
             .FirstOrDefaultAsync(ct);
 
-        return detail is null ? Results.NotFound() : Results.Ok(detail);
+        return detail is null
+            ? ApiErrors.NotFound("CAMPAIGN_NOT_FOUND", $"Không tìm thấy chiến dịch {id}.")
+            : Results.Ok(detail);
     }
 
     /// <summary>
@@ -189,9 +191,8 @@ public static class CampaignEndpoints
             var status = await db.Campaigns.Where(c => c.Id == id).Select(c => (CampaignStatus?)c.Status)
                 .FirstOrDefaultAsync(ct);
             return status is null
-                ? Results.NotFound()
-                : Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Không thể start chiến dịch",
-                    detail: $"Chiến dịch đang ở trạng thái {status}, chỉ start được khi ở trạng thái {CampaignStatus.Draft}.");
+                ? ApiErrors.NotFound("CAMPAIGN_NOT_FOUND", $"Không tìm thấy chiến dịch {id}.")
+                : ApiErrors.Conflict("CAMPAIGN_NOT_DRAFT", $"Chiến dịch đang ở trạng thái {status}, chỉ start được khi ở trạng thái {CampaignStatus.Draft}.");
         }
 
         // Sinh job hàng loạt bằng một câu INSERT ... SELECT; ON CONFLICT chặn job trùng
@@ -233,10 +234,10 @@ public static class CampaignEndpoints
         }
 
         if (errors.Count > 0)
-            return Results.ValidationProblem(errors);
+            return ApiErrors.Invalid("INVALID_QUERY", errors);
 
         if (!await db.Campaigns.AnyAsync(c => c.Id == id, ct))
-            return Results.NotFound();
+            return ApiErrors.NotFound("CAMPAIGN_NOT_FOUND", $"Không tìm thấy chiến dịch {id}.");
 
         var query = db.Deliveries.AsNoTracking().Where(d => d.CampaignId == id);
         if (statusFilter is { } s)
@@ -265,10 +266,9 @@ public static class CampaignEndpoints
         var status = await db.Campaigns.Where(c => c.Id == id).Select(c => (CampaignStatus?)c.Status)
             .FirstOrDefaultAsync(ct);
         if (status is null)
-            return Results.NotFound();
+            return ApiErrors.NotFound("CAMPAIGN_NOT_FOUND", $"Không tìm thấy chiến dịch {id}.");
         if (status == CampaignStatus.Draft)
-            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Không thể chạy lại",
-                detail: "Chiến dịch chưa được start.");
+            return ApiErrors.Conflict("CAMPAIGN_NOT_STARTED", "Chiến dịch chưa được start nên chưa có job để chạy lại.");
 
         var now = DateTimeOffset.UtcNow;
         await using var tx = await db.Database.BeginTransactionAsync(ct);

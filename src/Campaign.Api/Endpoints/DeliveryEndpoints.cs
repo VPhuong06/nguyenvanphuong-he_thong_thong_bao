@@ -27,7 +27,7 @@ public static class DeliveryEndpoints
             .Select(ToResponse)
             .FirstOrDefaultAsync(ct);
         if (delivery is null)
-            return Results.NotFound();
+            return ApiErrors.NotFound("DELIVERY_NOT_FOUND", $"Không tìm thấy job {id}.");
 
         var attempts = await db.DeliveryAttempts.AsNoTracking()
             .Where(a => a.DeliveryId == id)
@@ -57,9 +57,8 @@ public static class DeliveryEndpoints
             var status = await db.Deliveries.Where(d => d.Id == id).Select(d => (DeliveryStatus?)d.Status)
                 .FirstOrDefaultAsync(ct);
             return status is null
-                ? Results.NotFound()
-                : Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Không thể chạy lại",
-                    detail: $"Job đang ở trạng thái {status}, chỉ chạy lại được job {DeliveryStatus.Failed}.");
+                ? ApiErrors.NotFound("DELIVERY_NOT_FOUND", $"Không tìm thấy job {id}.")
+                : ApiErrors.Conflict("DELIVERY_NOT_FAILED", $"Job đang ở trạng thái {status}, chỉ chạy lại được job {DeliveryStatus.Failed}.");
         }
 
         var campaignId = await db.Deliveries.Where(d => d.Id == id).Select(d => d.CampaignId).FirstAsync(ct);

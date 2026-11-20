@@ -1,0 +1,111 @@
+### Kiểm thử Campaign API bằng REST Client (VS Code): chạy hệ thống bằng `docker compose up -d`
+### rồi bấm "Send Request" lần lượt từ trên xuống. Các request sau dùng id lấy từ request "create".
+### Lưu ý: nếu .env đặt SENDER_MODE=Real thì email ở request 3 được gửi thật qua SMTP; khi chỉ kiểm thử
+### hãy để SENDER_MODE=Mock hoặc đổi "channel" thành "Sms" (kênh SMS báo lỗi, không gửi ra ngoài).
+### Mọi lỗi do API trả về có dạng ApiError: { "code": "...", "message": "...", "errors": { trường: [...] } }.
+
+@api = http://localhost:5000
+@stats = http://localhost:5002
+@missingId = 00000000-0000-0000-0000-000000000001
+
+### 1. 200 – kiểm tra API và kết nối PostgreSQL, RabbitMQ
+GET {{api}}/health/ready
+
+### 2. 200 – danh bạ (lấy id liên hệ để chọn người nhận)
+GET {{api}}/contacts
+
+### 3. 201 + Location – tạo chiến dịch (nhập người nhận trực tiếp; fail01 luôn thất bại khi giả lập)
+# @name create
+POST {{api}}/campaigns
+Content-Type: application/json
+
+{
+  "name": "Thông báo lịch thi",
+  "channel": "Email",
+  "subject": "Lịch thi dành cho {{name}}",
+  "content": "Chào {{name}}, lịch thi môn Phát triển ứng dụng phân tán: 8h00 ngày 25/11.",
+  "contactIds": [],
+  "recipients": [
+    { "name": "Nguyễn Văn An", "address": "an@example.com" },
+    { "name": "Trần Thị Bình", "address": "binh@example.com" },
+    { "address": "fail01@example.com" }
+  ]
+}
+
+### 4. 200 – đọc lại chiến dịch theo id vừa tạo (trạng thái Draft, Total = 3)
+GET {{api}}/campaigns/{{create.response.body.$.id}}
+
+### 5. 202 Accepted – start: sinh job và đưa vào RabbitMQ, API trả về ngay
+POST {{api}}/campaigns/{{create.response.body.$.id}}/start
+
+### 6. 200 – theo dõi Pending / Sent / Failed (gửi lại vài lần để thấy số liệu thay đổi)
+GET {{api}}/campaigns/{{create.response.body.$.id}}
+
+### 7. 200 – kết quả gửi chi tiết, lọc job thất bại
+GET {{api}}/campaigns/{{create.response.body.$.id}}/deliveries?status=Failed
+
+### 8. 200 – danh sách chiến dịch có lọc và phân trang
+GET {{api}}/campaigns?status=Running&page=1&pageSize=10
+
+### 9. 409 CAMPAIGN_NOT_DRAFT – start lần hai
+POST {{api}}/campaigns/{{create.response.body.$.id}}/start
+
+### 10. 200 hoặc 202 – chạy lại job lỗi (mặc định bỏ qua lỗi vĩnh viễn)
+POST {{api}}/campaigns/{{create.response.body.$.id}}/retry-failed
+
+### 11. 202 – chạy lại cả lỗi vĩnh viễn
+POST {{api}}/campaigns/{{create.response.body.$.id}}/retry-failed?includePermanent=true
+
+### ---------- Đường lỗi ----------
+
+### 12. 400 INVALID_CAMPAIGN – thiếu tên, tiêu đề, nội dung, người nhận
+POST {{api}}/campaigns
+Content-Type: application/json
+
+{ "name": "", "channel": "Email", "subject": "", "content": "", "contactIds": [], "recipients": [] }
+
+### 13. 400 INVALID_CAMPAIGN – địa chỉ không đúng kênh (số điện thoại cho kênh Telegram)
+POST {{api}}/campaigns
+Content-Type: application/json
+
+{ "name": "Sai kênh", "channel": "Telegram", "subject": "s", "content": "c", "contactIds": [], "recipients": [{ "address": "abc" }] }
+
+### 14. 400 – JSON hỏng (framework chặn trước handler, không có ApiError)
+POST {{api}}/campaigns
+Content-Type: application/json
+
+{ "name": "x",
+
+### 15. 415 – thiếu Content-Type
+POST {{api}}/campaigns
+
+{ "name": "x" }
+
+### 16. 400 INVALID_QUERY – giá trị lọc không hợp lệ
+GET {{api}}/campaigns?status=XYZ&pageSize=1000
+
+### 17. 404 CAMPAIGN_NOT_FOUND – id đúng định dạng nhưng không tồn tại
+GET {{api}}/campaigns/{{missingId}}
+
+### 18. 404 rỗng – id sai định dạng, không khớp ràng buộc {id:guid}
+GET {{api}}/campaigns/abc
+
+### 19. 404 CAMPAIGN_NOT_FOUND – start chiến dịch không tồn tại
+POST {{api}}/campaigns/{{missingId}}/start
+
+### 20. 405 + Allow: GET – phương thức không hỗ trợ
+PUT {{api}}/campaigns/{{missingId}}
+Content-Type: application/json
+
+{}
+
+### 21. 404 DELIVERY_NOT_FOUND – job không tồn tại
+GET {{api}}/deliveries/{{missingId}}
+
+### ---------- Service thống kê (Publish–subscribe) ----------
+
+### 22. 200 – tổng quan các lần gửi của chiến dịch vừa tạo
+GET {{stats}}/stats/overview?campaignId={{create.response.body.$.id}}
+
+### 23. 200 – phân bố theo worker
+GET {{stats}}/stats/workers
